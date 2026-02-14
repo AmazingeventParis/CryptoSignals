@@ -1,6 +1,7 @@
 """
 API REST endpoints.
 """
+import asyncio
 from fastapi import APIRouter, Query
 from app.database import get_signals, get_trades, get_stats
 from app.core.scanner import scanner
@@ -98,13 +99,15 @@ async def get_ohlcv(
 @router.get("/tickers")
 async def get_all_tickers():
     pairs = get_enabled_pairs()
-    tickers = []
-    for pair in pairs:
+
+    async def fetch_one(pair):
         ticker = await market_data.fetch_ticker(pair)
         ticker["symbol"] = pair
         ticker["name"] = pair.split("/")[0]
-        tickers.append(ticker)
-    return {"tickers": tickers}
+        return ticker
+
+    tickers = await asyncio.gather(*[fetch_one(p) for p in pairs])
+    return {"tickers": list(tickers)}
 
 
 @router.post("/config/reload")

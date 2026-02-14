@@ -181,8 +181,19 @@ function switchTab(tab) {
 
     if (tab === 'charts') {
         if (!chartInstance) initChart();
-        // Charger tickers puis chart immediatement
-        fetchTickers().then(() => loadChart());
+        // Charger chart immediatement sans attendre les tickers
+        if (!selectedPair) {
+            // Utiliser /api/pairs (rapide) pour avoir la 1ere paire
+            fetch(`${API}/api/pairs`).then(r => r.json()).then(d => {
+                if (d.pairs && d.pairs.length && !selectedPair) {
+                    selectedPair = d.pairs[0];
+                    loadChart();
+                }
+            });
+        } else {
+            loadChart();
+        }
+        fetchTickers(); // en parallele
         if (!chartRefreshInterval) {
             chartRefreshInterval = setInterval(() => {
                 if (currentTab === 'charts') { fetchTickers(); loadChart(); }
