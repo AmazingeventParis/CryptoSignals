@@ -8,6 +8,7 @@ let volumeSeries = null;
 let selectedPair = null;
 let selectedTimeframe = '5m';
 let chartRefreshInterval = null;
+let chartNeedsFit = true;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -266,12 +267,14 @@ async function fetchTickers() {
 
 function selectPair(symbol) {
     selectedPair = symbol;
+    chartNeedsFit = true;
     fetchTickers();
     loadChart();
 }
 
 function changeTimeframe(tf) {
     selectedTimeframe = tf;
+    chartNeedsFit = true;
     document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`.tf-btn[onclick="changeTimeframe('${tf}')"]`).classList.add('active');
     loadChart();
@@ -300,7 +303,10 @@ async function loadChart() {
             color: c.close >= c.open ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)',
         })));
 
-        chartInstance.timeScale().fitContent();
+        if (chartNeedsFit) {
+            chartInstance.timeScale().fitContent();
+            chartNeedsFit = false;
+        }
     } catch (e) {
         console.error('Erreur chart:', e);
     }
