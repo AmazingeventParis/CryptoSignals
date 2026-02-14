@@ -10,36 +10,51 @@ logger = logging.getLogger(__name__)
 class MarketData:
     def __init__(self):
         self.exchange: ccxt.mexc = None
+        self.exchange_private: ccxt.mexc = None
         self._cache: dict = {}
 
     def is_connected(self) -> bool:
         return self.exchange is not None and self.exchange.markets is not None
 
     async def connect(self):
+        # Exchange public (pas de cle API, pas de restriction IP)
         try:
             self.exchange = ccxt.mexc({
-                "apiKey": MEXC_API_KEY,
-                "secret": MEXC_SECRET_KEY,
-                "options": {
-                    "defaultType": "swap",
-                    "fetchCurrencies": False,
-                },
+                "options": {"defaultType": "swap"},
                 "enableRateLimit": True,
             })
             await self.exchange.load_markets()
-            logger.info(f"Connecte a MEXC Futures - {len(self.exchange.markets)} marches charges")
+            logger.info(f"Connecte a MEXC Futures (public) - {len(self.exchange.markets)} marches")
         except Exception as e:
-            logger.warning(f"Connexion MEXC echouee (retry au prochain scan): {e}")
+            logger.warning(f"Connexion MEXC public echouee: {e}")
             if self.exchange:
                 try:
                     await self.exchange.close()
                 except Exception:
                     pass
                 self.exchange = None
+            return
+
+        # Exchange prive (pour balance uniquement)
+        if MEXC_API_KEY and MEXC_SECRET_KEY:
+            try:
+                self.exchange_private = ccxt.mexc({
+                    "apiKey": MEXC_API_KEY,
+                    "secret": MEXC_SECRET_KEY,
+                    "options": {"defaultType": "swap"},
+                    "enableRateLimit": True,
+                })
+                self.exchange_private.markets = self.exchange.markets
+                logger.info("MEXC prive configure (pour balance)")
+            except Exception as e:
+                logger.warning(f"MEXC prive non disponible: {e}")
+                self.exchange_private = None
 
     async def close(self):
         if self.exchange:
             await self.exchange.close()
+        if self.exchange_private:
+            await self.exchange_private.close()
 
     async def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 100) -> pd.DataFrame:
         try:
@@ -109,8 +124,10 @@ class MarketData:
             return {"price": 0, "volume_24h": 0, "change_24h_pct": 0}
 
     async def fetch_balance(self) -> dict:
+        if not self.exchange_private:
+            return {"total": 0, "free": 0, "used": 0}
         try:
-            balance = await self.exchange.fetch_balance()
+            balance = await self.exchange_private.fetch_balance()
             usdt = balance.get("USDT", {})
             return {
                 "total": usdt.get("total", 0),
