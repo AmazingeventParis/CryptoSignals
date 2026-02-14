@@ -14,6 +14,7 @@ let vpCanvas = null;
 let showFVG = true;
 let showVolume = true;
 let preloadedCandles = null;
+let preloadedPair = null;
 let mexcWs = null;
 let wsReconnectTimer = null;
 
@@ -24,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch(`${API}/api/pairs`).then(r => r.json()).then(d => {
         if (d.pairs && d.pairs.length) {
             selectedPair = d.pairs[0];
+            preloadedPair = d.pairs[0];
             const sym = selectedPair.replace('/', '-');
             fetch(`${API}/api/ohlcv/${sym}?timeframe=${selectedTimeframe}&limit=300`)
                 .then(r => r.json())
@@ -450,9 +452,10 @@ async function loadChart() {
     if (!selectedPair || !chartInstance) return;
     try {
         let candles;
-        if (preloadedCandles && preloadedCandles.length) {
+        if (preloadedCandles && preloadedCandles.length && preloadedPair === selectedPair && selectedTimeframe === '5m') {
             candles = preloadedCandles;
-            preloadedCandles = null; // utiliser une seule fois
+            preloadedCandles = null;
+            preloadedPair = null;
         } else {
             const sym = selectedPair.replace('/', '-');
             const res = await fetch(`${API}/api/ohlcv/${sym}?timeframe=${selectedTimeframe}&limit=300`);
