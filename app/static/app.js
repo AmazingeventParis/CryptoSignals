@@ -464,6 +464,18 @@ async function loadChart() {
         }
         if (!candles.length) return;
 
+        // Adapter la precision selon le prix
+        const price = candles[candles.length - 1].close;
+        let precision, minMove;
+        if (price >= 100)       { precision = 2; minMove = 0.01; }
+        else if (price >= 1)    { precision = 4; minMove = 0.0001; }
+        else if (price >= 0.01) { precision = 6; minMove = 0.000001; }
+        else                    { precision = 8; minMove = 0.00000001; }
+
+        candleSeries.applyOptions({
+            priceFormat: { type: 'price', precision, minMove },
+        });
+
         // Ajuster UTC -> heure locale
         const tzOffset = new Date().getTimezoneOffset() * -60;
         const adjusted = candles.map(c => ({
