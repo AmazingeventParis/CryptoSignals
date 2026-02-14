@@ -13,11 +13,22 @@ let lastCandles = [];
 let vpCanvas = null;
 let showFVG = true;
 let showVolume = true;
+let preloadedCandles = null;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
     refreshAll();
-    fetchTickers(); // pre-charger les paires
+    // Pre-charger la 1ere paire + ses bougies pour affichage instantane
+    fetch(`${API}/api/pairs`).then(r => r.json()).then(d => {
+        if (d.pairs && d.pairs.length) {
+            selectedPair = d.pairs[0];
+            const sym = selectedPair.replace('/', '-');
+            fetch(`${API}/api/ohlcv/${sym}?timeframe=${selectedTimeframe}&limit=300`)
+                .then(r => r.json())
+                .then(data => { preloadedCandles = data.candles || []; });
+        }
+    });
+    fetchTickers();
     setInterval(refreshAll, 15000);
 });
 
@@ -434,10 +445,16 @@ function changeTimeframe(tf) {
 async function loadChart() {
     if (!selectedPair || !chartInstance) return;
     try {
-        const sym = selectedPair.replace('/', '-');
-        const res = await fetch(`${API}/api/ohlcv/${sym}?timeframe=${selectedTimeframe}&limit=300`);
-        const data = await res.json();
-        const candles = data.candles || [];
+        let candles;
+        if (preloadedCandles && preloadedCandles.length) {
+            candles = preloadedCandles;
+            preloadedCandles = null; // utiliser une seule fois
+        } else {
+            const sym = selectedPair.replace('/', '-');
+            const res = await fetch(`${API}/api/ohlcv/${sym}?timeframe=${selectedTimeframe}&limit=300`);
+            const data = await res.json();
+            candles = data.candles || [];
+        }
         if (!candles.length) return;
 
         // Ajuster UTC -> heure locale
