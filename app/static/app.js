@@ -9,6 +9,8 @@ let selectedPair = null;
 let selectedTimeframe = '5m';
 let chartRefreshInterval = null;
 let chartNeedsFit = true;
+let lastCandles = [];
+let vpCanvas = null;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -226,12 +228,109 @@ function initChart() {
         scaleMargins: { top: 0.85, bottom: 0 },
     });
 
+    // Canvas overlay pour Volume Profile
+    vpCanvas = document.createElement('canvas');
+    vpCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:2;';
+    container.style.position = 'relative';
+    container.appendChild(vpCanvas);
+
+    // Redessiner le VP quand on scroll/zoom le chart
+    chartInstance.timeScale().subscribeVisibleLogicalRangeChange(() => drawVolumeProfile());
+    candleSeries.subscribeDataChanged && candleSeries.subscribeDataChanged(() => drawVolumeProfile());
+
     // Empecher le zoom page quand on scroll/pinch sur le chart
     container.addEventListener('wheel', (e) => { e.preventDefault(); }, { passive: false });
     container.addEventListener('touchstart', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
 
     window.addEventListener('resize', () => {
-        if (chartInstance) chartInstance.applyOptions({ width: container.clientWidth });
+        if (chartInstance) {
+            chartInstance.applyOptions({ width: container.clientWidth });
+            drawVolumeProfile();
+        }
+    });
+}
+
+// --- Volume Profile ---
+function computeVolumeProfile(candles, buckets = 30) {
+    if (!candles.length) return [];
+
+    let minPrice = Infinity, maxPrice = -Infinity;
+    candles.forEach(c => {
+        minPrice = Math.min(minPrice, c.low);
+        maxPrice = Math.max(maxPrice, c.high);
+    });
+
+    const range = maxPrice - minPrice;
+    if (range <= 0) return [];
+    const bucketSize = range / buckets;
+
+    const profile = Array.from({ length: buckets }, (_, i) => ({
+        priceFrom: minPrice + i * bucketSize,
+        priceTo: minPrice + (i + 1) * bucketSize,
+        buyVol: 0,
+        sellVol: 0,
+    }));
+
+    candles.forEach(c => {
+        const isBuy = c.close >= c.open;
+        const cLow = c.low, cHigh = c.high;
+        const cRange = cHigh - cLow || 1;
+
+        for (let i = 0; i < buckets; i++) {
+            const bLow = profile[i].priceFrom;
+            const bHigh = profile[i].priceTo;
+            const overlapLow = Math.max(cLow, bLow);
+            const overlapHigh = Math.min(cHigh, bHigh);
+
+            if (overlapLow < overlapHigh) {
+                const proportion = (overlapHigh - overlapLow) / cRange;
+                const vol = c.volume * proportion;
+                if (isBuy) profile[i].buyVol += vol;
+                else profile[i].sellVol += vol;
+            }
+        }
+    });
+
+    return profile;
+}
+
+function drawVolumeProfile() {
+    if (!vpCanvas || !chartInstance || !candleSeries || !lastCandles.length) return;
+
+    const container = document.getElementById('chart-container');
+    vpCanvas.width = container.clientWidth;
+    vpCanvas.height = container.clientHeight;
+
+    const ctx = vpCanvas.getContext('2d');
+    ctx.clearRect(0, 0, vpCanvas.width, vpCanvas.height);
+
+    const profile = computeVolumeProfile(lastCandles);
+    if (!profile.length) return;
+
+    const maxVol = Math.max(...profile.map(p => p.buyVol + p.sellVol));
+    if (maxVol <= 0) return;
+
+    const maxBarWidth = vpCanvas.width * 0.25;
+
+    profile.forEach(p => {
+        const y1 = candleSeries.priceToCoordinate(p.priceTo);
+        const y2 = candleSeries.priceToCoordinate(p.priceFrom);
+        if (y1 === null || y2 === null) return;
+
+        const y = Math.min(y1, y2);
+        const h = Math.max(Math.abs(y2 - y1) - 1, 1);
+        const totalVol = p.buyVol + p.sellVol;
+        const totalWidth = (totalVol / maxVol) * maxBarWidth;
+        const buyWidth = totalVol > 0 ? (p.buyVol / totalVol) * totalWidth : 0;
+        const sellWidth = totalWidth - buyWidth;
+
+        // Acheteurs (vert)
+        ctx.fillStyle = 'rgba(63, 185, 80, 0.25)';
+        ctx.fillRect(0, y, buyWidth, h);
+
+        // Vendeurs (rouge)
+        ctx.fillStyle = 'rgba(248, 81, 73, 0.25)';
+        ctx.fillRect(buyWidth, y, sellWidth, h);
     });
 }
 
@@ -310,10 +409,16 @@ async function loadChart() {
             color: c.close >= c.open ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)',
         })));
 
+        // Stocker les candles pour le volume profile
+        lastCandles = candles;
+
         if (chartNeedsFit) {
             chartInstance.timeScale().fitContent();
             chartNeedsFit = false;
         }
+
+        // Dessiner le volume profile
+        setTimeout(() => drawVolumeProfile(), 50);
     } catch (e) {
         console.error('Erreur chart:', e);
     }
