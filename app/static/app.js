@@ -222,10 +222,9 @@ function initChart() {
     });
 
     volumeSeries = chartInstance.addHistogramSeries({
-        color: '#58a6ff',
         priceFormat: { type: 'volume' },
         priceScaleId: '',
-        scaleMargins: { top: 0.85, bottom: 0 },
+        scaleMargins: { top: 0.8, bottom: 0 },
     });
 
     // Canvas overlay pour Volume Profile
@@ -310,7 +309,7 @@ function drawVolumeProfile() {
     const maxVol = Math.max(...profile.map(p => p.buyVol + p.sellVol));
     if (maxVol <= 0) return;
 
-    const maxBarWidth = vpCanvas.width * 0.25;
+    const maxBarWidth = vpCanvas.width * 0.55;
 
     profile.forEach(p => {
         const y1 = candleSeries.priceToCoordinate(p.priceTo);
@@ -318,19 +317,26 @@ function drawVolumeProfile() {
         if (y1 === null || y2 === null) return;
 
         const y = Math.min(y1, y2);
-        const h = Math.max(Math.abs(y2 - y1) - 1, 1);
+        const h = Math.max(Math.abs(y2 - y1), 2);
         const totalVol = p.buyVol + p.sellVol;
         const totalWidth = (totalVol / maxVol) * maxBarWidth;
-        const buyWidth = totalVol > 0 ? (p.buyVol / totalVol) * totalWidth : 0;
-        const sellWidth = totalWidth - buyWidth;
 
-        // Acheteurs (vert)
-        ctx.fillStyle = 'rgba(63, 185, 80, 0.25)';
-        ctx.fillRect(0, y, buyWidth, h);
-
-        // Vendeurs (rouge)
-        ctx.fillStyle = 'rgba(248, 81, 73, 0.25)';
-        ctx.fillRect(buyWidth, y, sellWidth, h);
+        // Dominance: si plus d'acheteurs -> vert, sinon -> rouge
+        if (p.buyVol >= p.sellVol) {
+            ctx.fillStyle = 'rgba(38, 166, 154, 0.35)';
+            ctx.fillRect(0, y, totalWidth, h);
+            // Partie vendeurs en rouge a droite
+            const sellWidth = (p.sellVol / totalVol) * totalWidth;
+            ctx.fillStyle = 'rgba(239, 83, 80, 0.35)';
+            ctx.fillRect(totalWidth - sellWidth, y, sellWidth, h);
+        } else {
+            ctx.fillStyle = 'rgba(239, 83, 80, 0.35)';
+            ctx.fillRect(0, y, totalWidth, h);
+            // Partie acheteurs en vert a gauche
+            const buyWidth = (p.buyVol / totalVol) * totalWidth;
+            ctx.fillStyle = 'rgba(38, 166, 154, 0.35)';
+            ctx.fillRect(0, y, buyWidth, h);
+        }
     });
 }
 
@@ -406,7 +412,7 @@ async function loadChart() {
         volumeSeries.setData(candles.map(c => ({
             time: c.time + tzOffset,
             value: c.volume,
-            color: c.close >= c.open ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)',
+            color: c.close >= c.open ? 'rgba(63,185,80,0.5)' : 'rgba(248,81,73,0.5)',
         })));
 
         // Stocker les candles pour le volume profile
