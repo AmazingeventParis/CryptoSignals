@@ -2,6 +2,12 @@ const API = '';
 
 // --- State ---
 let currentTab = 'signals';
+let chartInstance = null;
+let candleSeries = null;
+let volumeSeries = null;
+let selectedPair = null;
+let selectedTimeframe = '5m';
+let chartRefreshInterval = null;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -166,6 +172,138 @@ function switchTab(tab) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
     document.getElementById(`tab-${tab}`).classList.add('active');
+
+    if (tab === 'charts') {
+        if (!chartInstance) initChart();
+        fetchTickers();
+        loadChart();
+        if (!chartRefreshInterval) {
+            chartRefreshInterval = setInterval(() => {
+                if (currentTab === 'charts') { fetchTickers(); loadChart(); }
+            }, 10000);
+        }
+    }
+}
+
+// --- Charts ---
+function initChart() {
+    const container = document.getElementById('chart-container');
+    container.innerHTML = '';
+    chartInstance = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: 400,
+        layout: {
+            background: { color: '#161b22' },
+            textColor: '#e6edf3',
+        },
+        grid: {
+            vertLines: { color: '#30363d' },
+            horzLines: { color: '#30363d' },
+        },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: '#30363d' },
+        timeScale: {
+            borderColor: '#30363d',
+            timeVisible: true,
+            secondsVisible: false,
+        },
+    });
+
+    candleSeries = chartInstance.addCandlestickSeries({
+        upColor: '#3fb950',
+        downColor: '#f85149',
+        borderUpColor: '#3fb950',
+        borderDownColor: '#f85149',
+        wickUpColor: '#3fb950',
+        wickDownColor: '#f85149',
+    });
+
+    volumeSeries = chartInstance.addHistogramSeries({
+        color: '#58a6ff',
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+        scaleMargins: { top: 0.85, bottom: 0 },
+    });
+
+    window.addEventListener('resize', () => {
+        if (chartInstance) chartInstance.applyOptions({ width: container.clientWidth });
+    });
+}
+
+async function fetchTickers() {
+    try {
+        const res = await fetch(`${API}/api/tickers`);
+        const data = await res.json();
+        const tickers = data.tickers || [];
+        const bar = document.getElementById('ticker-bar');
+        const selector = document.getElementById('pair-selector');
+
+        if (!selectedPair && tickers.length) {
+            selectedPair = tickers[0].symbol;
+        }
+
+        bar.innerHTML = tickers.map(t => {
+            const changeClass = t.change_24h_pct >= 0 ? 'up' : 'down';
+            const changeSign = t.change_24h_pct >= 0 ? '+' : '';
+            const active = t.symbol === selectedPair ? 'active' : '';
+            const dec = getDecimals(t.price);
+            return `
+            <div class="ticker-item ${active}" onclick="selectPair('${t.symbol}')">
+                <div class="ticker-name">${t.name}</div>
+                <div class="ticker-price">${t.price?.toFixed(dec) || '--'}</div>
+                <div class="ticker-change ${changeClass}">${changeSign}${t.change_24h_pct?.toFixed(2) || '0'}%</div>
+            </div>`;
+        }).join('');
+
+        selector.innerHTML = tickers.map(t => {
+            const active = t.symbol === selectedPair ? 'active' : '';
+            return `<button class="pair-btn ${active}" onclick="selectPair('${t.symbol}')">${t.name}</button>`;
+        }).join('');
+    } catch (e) {
+        console.error('Erreur tickers:', e);
+    }
+}
+
+function selectPair(symbol) {
+    selectedPair = symbol;
+    fetchTickers();
+    loadChart();
+}
+
+function changeTimeframe(tf) {
+    selectedTimeframe = tf;
+    document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.tf-btn[onclick="changeTimeframe('${tf}')"]`).classList.add('active');
+    loadChart();
+}
+
+async function loadChart() {
+    if (!selectedPair || !chartInstance) return;
+    try {
+        const sym = selectedPair.replace('/', '-');
+        const res = await fetch(`${API}/api/ohlcv/${sym}?timeframe=${selectedTimeframe}&limit=300`);
+        const data = await res.json();
+        const candles = data.candles || [];
+        if (!candles.length) return;
+
+        candleSeries.setData(candles.map(c => ({
+            time: c.time,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+        })));
+
+        volumeSeries.setData(candles.map(c => ({
+            time: c.time,
+            value: c.volume,
+            color: c.close >= c.open ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)',
+        })));
+
+        chartInstance.timeScale().fitContent();
+    } catch (e) {
+        console.error('Erreur chart:', e);
+    }
 }
 
 // --- Utils ---

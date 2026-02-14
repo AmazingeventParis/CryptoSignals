@@ -142,9 +142,58 @@ body {
 }
 .footer p { font-size: 10px; color: var(--text-secondary); }
 
+/* Charts */
+.chart-controls {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; margin-bottom: 10px; flex-wrap: wrap;
+}
+.pair-selector {
+    display: flex; gap: 4px; flex-wrap: wrap;
+}
+.pair-btn {
+    background: var(--bg-card); border: 1px solid var(--border); color: var(--text-secondary);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;
+    transition: all 0.15s;
+}
+.pair-btn:hover { border-color: var(--blue); color: var(--text); }
+.pair-btn.active { background: rgba(88,166,255,0.15); border-color: var(--blue); color: var(--blue); }
+.tf-selector { display: flex; gap: 3px; }
+.tf-btn {
+    background: none; border: 1px solid var(--border); color: var(--text-secondary);
+    padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.tf-btn:hover { color: var(--text); }
+.tf-btn.active { background: var(--bg-card); color: var(--text); border-color: var(--blue); }
+
+.ticker-bar {
+    display: flex; gap: 6px; overflow-x: auto; padding: 8px 0;
+    scrollbar-width: none;
+}
+.ticker-bar::-webkit-scrollbar { display: none; }
+.ticker-item {
+    flex-shrink: 0; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 14px; min-width: 120px; cursor: pointer;
+    transition: border-color 0.15s;
+}
+.ticker-item:hover { border-color: var(--blue); }
+.ticker-item.active { border-color: var(--blue); background: rgba(88,166,255,0.08); }
+.ticker-name { font-size: 13px; font-weight: 700; }
+.ticker-price { font-size: 15px; font-family: monospace; font-weight: 600; margin-top: 2px; }
+.ticker-change { font-size: 11px; font-weight: 600; margin-top: 2px; }
+.ticker-change.up { color: var(--green); }
+.ticker-change.down { color: var(--red); }
+
+.chart-container {
+    width: 100%; height: 400px;
+    border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; background: var(--bg-card);
+}
+
 /* Responsive */
 @media (max-width: 480px) {
     .stats-row { grid-template-columns: repeat(2, 1fr); }
     .stat-value { font-size: 16px; }
     .signal-body { grid-template-columns: 1fr; }
+    .chart-container { height: 300px; }
+    .chart-controls { flex-direction: column; align-items: flex-start; }
 }

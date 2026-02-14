@@ -70,6 +70,43 @@ async def get_market_data(symbol: str):
     }
 
 
+@router.get("/ohlcv/{symbol}")
+async def get_ohlcv(
+    symbol: str,
+    timeframe: str = Query("5m"),
+    limit: int = Query(200, ge=10, le=500),
+):
+    symbol_fmt = symbol.replace("-", "/")
+    df = await market_data.fetch_ohlcv(symbol_fmt, timeframe, limit=limit)
+    if df.empty:
+        return {"candles": [], "symbol": symbol_fmt, "timeframe": timeframe}
+
+    candles = []
+    for ts, row in df.iterrows():
+        candles.append({
+            "time": int(ts.timestamp()),
+            "open": row["open"],
+            "high": row["high"],
+            "low": row["low"],
+            "close": row["close"],
+            "volume": row["volume"],
+        })
+
+    return {"candles": candles, "symbol": symbol_fmt, "timeframe": timeframe}
+
+
+@router.get("/tickers")
+async def get_all_tickers():
+    pairs = get_enabled_pairs()
+    tickers = []
+    for pair in pairs:
+        ticker = await market_data.fetch_ticker(pair)
+        ticker["symbol"] = pair
+        ticker["name"] = pair.split("/")[0]
+        tickers.append(ticker)
+    return {"tickers": tickers}
+
+
 @router.post("/config/reload")
 async def reload_config():
     reload_settings()
