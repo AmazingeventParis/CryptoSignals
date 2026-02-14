@@ -593,7 +593,4 @@ function disconnectMexcWs() {
     }
 }
 
-// --- PWA ---
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/static/sw.js').catch(() => {});
-}
+// PWA desactive - pas de Service Worker (evite les problemes de cache)

@@ -7,8 +7,10 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import websockets
 
 from app.config import SETTINGS, LOG_LEVEL, BASE_DIR
@@ -63,6 +65,16 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# No-cache pour fichiers statiques
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if '/static/' in str(request.url):
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        return response
+
+app.add_middleware(NoCacheMiddleware)
 
 # API routes
 app.include_router(router)
