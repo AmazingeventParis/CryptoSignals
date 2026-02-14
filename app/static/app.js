@@ -207,8 +207,12 @@ function switchTab(tab) {
         fetchTickers(); // en parallele
         if (!chartRefreshInterval) {
             chartRefreshInterval = setInterval(() => {
-                if (currentTab === 'charts') { fetchTickers(); loadChart(); }
-            }, 10000);
+                if (currentTab === 'charts') loadChart();
+            }, 3000); // refresh bougies toutes les 3s
+            // Tickers moins souvent (prix dans les badges)
+            setInterval(() => {
+                if (currentTab === 'charts') fetchTickers();
+            }, 15000);
         }
     }
 }
