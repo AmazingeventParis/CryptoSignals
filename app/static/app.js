@@ -12,6 +12,7 @@ let chartNeedsFit = true;
 let lastCandles = [];
 let vpCanvas = null;
 let showFVG = true;
+let showVolume = true;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -309,6 +310,16 @@ function toggleFVG() {
     btn.textContent = showFVG ? 'FVG ON' : 'FVG OFF';
     btn.classList.toggle('active', showFVG);
     drawFVG();
+}
+
+function toggleVolume() {
+    showVolume = !showVolume;
+    const btn = document.getElementById('vol-toggle');
+    btn.textContent = showVolume ? 'VOL ON' : 'VOL OFF';
+    btn.classList.toggle('active', showVolume);
+    if (volumeSeries) {
+        volumeSeries.applyOptions({ visible: showVolume });
+    }
 }
 
 function drawFVG() {
