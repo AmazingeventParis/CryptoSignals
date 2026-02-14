@@ -226,6 +226,10 @@ function initChart() {
         scaleMargins: { top: 0.85, bottom: 0 },
     });
 
+    // Empecher le zoom page quand on scroll/pinch sur le chart
+    container.addEventListener('wheel', (e) => { e.preventDefault(); }, { passive: false });
+    container.addEventListener('touchstart', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+
     window.addEventListener('resize', () => {
         if (chartInstance) chartInstance.applyOptions({ width: container.clientWidth });
     });
