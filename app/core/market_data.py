@@ -20,16 +20,21 @@ class MarketData:
             self.exchange = ccxt.mexc({
                 "apiKey": MEXC_API_KEY,
                 "secret": MEXC_SECRET_KEY,
-                "options": {"defaultType": "swap"},
+                "options": {
+                    "defaultType": "swap",
+                    "fetchCurrencies": False,
+                },
                 "enableRateLimit": True,
-                "aiohttp_trust_env": True,
             })
             await self.exchange.load_markets()
             logger.info(f"Connecte a MEXC Futures - {len(self.exchange.markets)} marches charges")
         except Exception as e:
             logger.warning(f"Connexion MEXC echouee (retry au prochain scan): {e}")
             if self.exchange:
-                await self.exchange.close()
+                try:
+                    await self.exchange.close()
+                except Exception:
+                    pass
                 self.exchange = None
 
     async def close(self):
