@@ -567,11 +567,11 @@ function updateCandleRealtime(data) {
     const time = data.t + tzOffset;
     const candle = {
         time: time,
-        open: parseFloat(data.o),
-        high: parseFloat(data.h),
-        low: parseFloat(data.l),
-        close: parseFloat(data.c),
-        volume: parseFloat(data.v),
+        open: data.o,
+        high: data.h,
+        low: data.l,
+        close: data.c,
+        volume: data.q || data.a || 0,
     };
 
     // Mettre a jour la derniere bougie ou en ajouter une nouvelle
