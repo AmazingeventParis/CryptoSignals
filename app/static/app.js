@@ -227,15 +227,14 @@ function initChart() {
         scaleMargins: { top: 0.8, bottom: 0 },
     });
 
-    // Canvas overlay pour Volume Profile
+    // Canvas overlay pour FVG (Fair Value Gaps)
     vpCanvas = document.createElement('canvas');
     vpCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:2;';
     container.style.position = 'relative';
     container.appendChild(vpCanvas);
 
-    // Redessiner le VP quand on scroll/zoom le chart
-    chartInstance.timeScale().subscribeVisibleLogicalRangeChange(() => drawVolumeProfile());
-    candleSeries.subscribeDataChanged && candleSeries.subscribeDataChanged(() => drawVolumeProfile());
+    // Redessiner les FVG quand on scroll/zoom
+    chartInstance.timeScale().subscribeVisibleLogicalRangeChange(() => drawFVG());
 
     // Empecher le zoom page quand on scroll/pinch sur le chart
     container.addEventListener('wheel', (e) => { e.preventDefault(); }, { passive: false });
@@ -244,56 +243,65 @@ function initChart() {
     window.addEventListener('resize', () => {
         if (chartInstance) {
             chartInstance.applyOptions({ width: container.clientWidth });
-            drawVolumeProfile();
+            drawFVG();
         }
     });
 }
 
-// --- Volume Profile ---
-function computeVolumeProfile(candles, buckets = 30) {
-    if (!candles.length) return [];
+// --- Fair Value Gaps (FVG) ---
+function detectFVG(candles) {
+    const fvgs = [];
+    for (let i = 2; i < candles.length; i++) {
+        const c1 = candles[i - 2]; // bougie 1
+        const c2 = candles[i - 1]; // bougie 2 (milieu)
+        const c3 = candles[i];     // bougie 3
 
-    let minPrice = Infinity, maxPrice = -Infinity;
-    candles.forEach(c => {
-        minPrice = Math.min(minPrice, c.low);
-        maxPrice = Math.max(maxPrice, c.high);
-    });
+        // FVG Haussier: low de bougie 3 > high de bougie 1
+        if (c3.low > c1.high) {
+            fvgs.push({
+                type: 'bull',
+                top: c3.low,
+                bottom: c1.high,
+                timeStart: c2.time,
+                timeEnd: candles[candles.length - 1].time,
+                filled: false,
+            });
+        }
 
-    const range = maxPrice - minPrice;
-    if (range <= 0) return [];
-    const bucketSize = range / buckets;
+        // FVG Baissier: high de bougie 3 < low de bougie 1
+        if (c3.high < c1.low) {
+            fvgs.push({
+                type: 'bear',
+                top: c1.low,
+                bottom: c3.high,
+                timeStart: c2.time,
+                timeEnd: candles[candles.length - 1].time,
+                filled: false,
+            });
+        }
+    }
 
-    const profile = Array.from({ length: buckets }, (_, i) => ({
-        priceFrom: minPrice + i * bucketSize,
-        priceTo: minPrice + (i + 1) * bucketSize,
-        buyVol: 0,
-        sellVol: 0,
-    }));
-
-    candles.forEach(c => {
-        const isBuy = c.close >= c.open;
-        const cLow = c.low, cHigh = c.high;
-        const cRange = cHigh - cLow || 1;
-
-        for (let i = 0; i < buckets; i++) {
-            const bLow = profile[i].priceFrom;
-            const bHigh = profile[i].priceTo;
-            const overlapLow = Math.max(cLow, bLow);
-            const overlapHigh = Math.min(cHigh, bHigh);
-
-            if (overlapLow < overlapHigh) {
-                const proportion = (overlapHigh - overlapLow) / cRange;
-                const vol = c.volume * proportion;
-                if (isBuy) profile[i].buyVol += vol;
-                else profile[i].sellVol += vol;
+    // Verifier si le FVG a ete comble (filled)
+    fvgs.forEach(fvg => {
+        for (let i = 0; i < candles.length; i++) {
+            if (candles[i].time <= fvg.timeStart) continue;
+            if (fvg.type === 'bull' && candles[i].low <= fvg.bottom) {
+                fvg.filled = true;
+                fvg.timeEnd = candles[i].time;
+                break;
+            }
+            if (fvg.type === 'bear' && candles[i].high >= fvg.top) {
+                fvg.filled = true;
+                fvg.timeEnd = candles[i].time;
+                break;
             }
         }
     });
 
-    return profile;
+    return fvgs;
 }
 
-function drawVolumeProfile() {
+function drawFVG() {
     if (!vpCanvas || !chartInstance || !candleSeries || !lastCandles.length) return;
 
     const container = document.getElementById('chart-container');
@@ -303,39 +311,42 @@ function drawVolumeProfile() {
     const ctx = vpCanvas.getContext('2d');
     ctx.clearRect(0, 0, vpCanvas.width, vpCanvas.height);
 
-    const profile = computeVolumeProfile(lastCandles);
-    if (!profile.length) return;
+    const fvgs = detectFVG(lastCandles);
+    const timeScale = chartInstance.timeScale();
 
-    const maxVol = Math.max(...profile.map(p => p.buyVol + p.sellVol));
-    if (maxVol <= 0) return;
+    fvgs.forEach(fvg => {
+        const y1 = candleSeries.priceToCoordinate(fvg.top);
+        const y2 = candleSeries.priceToCoordinate(fvg.bottom);
+        const x1 = timeScale.timeToCoordinate(fvg.timeStart);
+        const x2 = fvg.filled
+            ? timeScale.timeToCoordinate(fvg.timeEnd)
+            : vpCanvas.width;
 
-    const maxBarWidth = vpCanvas.width * 0.55;
-
-    profile.forEach(p => {
-        const y1 = candleSeries.priceToCoordinate(p.priceTo);
-        const y2 = candleSeries.priceToCoordinate(p.priceFrom);
-        if (y1 === null || y2 === null) return;
+        if (y1 === null || y2 === null || x1 === null) return;
 
         const y = Math.min(y1, y2);
-        const h = Math.max(Math.abs(y2 - y1), 2);
-        const totalVol = p.buyVol + p.sellVol;
-        const totalWidth = (totalVol / maxVol) * maxBarWidth;
+        const h = Math.abs(y2 - y1);
+        const x = x1;
+        const w = (x2 !== null ? x2 : vpCanvas.width) - x1;
 
-        // Dominance: si plus d'acheteurs -> vert, sinon -> rouge
-        if (p.buyVol >= p.sellVol) {
-            ctx.fillStyle = 'rgba(38, 166, 154, 0.35)';
-            ctx.fillRect(0, y, totalWidth, h);
-            // Partie vendeurs en rouge a droite
-            const sellWidth = (p.sellVol / totalVol) * totalWidth;
-            ctx.fillStyle = 'rgba(239, 83, 80, 0.35)';
-            ctx.fillRect(totalWidth - sellWidth, y, sellWidth, h);
+        if (w <= 0 || h <= 0) return;
+
+        const alpha = fvg.filled ? 0.12 : 0.3;
+
+        if (fvg.type === 'bull') {
+            ctx.fillStyle = `rgba(38, 166, 154, ${alpha})`;
         } else {
-            ctx.fillStyle = 'rgba(239, 83, 80, 0.35)';
-            ctx.fillRect(0, y, totalWidth, h);
-            // Partie acheteurs en vert a gauche
-            const buyWidth = (p.buyVol / totalVol) * totalWidth;
-            ctx.fillStyle = 'rgba(38, 166, 154, 0.35)';
-            ctx.fillRect(0, y, buyWidth, h);
+            ctx.fillStyle = `rgba(239, 83, 80, ${alpha})`;
+        }
+        ctx.fillRect(x, y, w, h);
+
+        // Bordure fine
+        if (!fvg.filled) {
+            ctx.strokeStyle = fvg.type === 'bull'
+                ? 'rgba(38, 166, 154, 0.5)'
+                : 'rgba(239, 83, 80, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y, w, h);
         }
     });
 }
@@ -423,8 +434,8 @@ async function loadChart() {
             chartNeedsFit = false;
         }
 
-        // Dessiner le volume profile
-        setTimeout(() => drawVolumeProfile(), 50);
+        // Dessiner les Fair Value Gaps
+        setTimeout(() => drawFVG(), 50);
     } catch (e) {
         console.error('Erreur chart:', e);
     }
