@@ -11,11 +11,13 @@ let chartRefreshInterval = null;
 let chartNeedsFit = true;
 let lastCandles = [];
 let vpCanvas = null;
+let showFVG = true;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
     refreshAll();
-    setInterval(refreshAll, 15000); // refresh toutes les 15s
+    fetchTickers(); // pre-charger les paires
+    setInterval(refreshAll, 15000);
 });
 
 async function refreshAll() {
@@ -178,8 +180,8 @@ function switchTab(tab) {
 
     if (tab === 'charts') {
         if (!chartInstance) initChart();
-        fetchTickers();
-        loadChart();
+        // Charger tickers puis chart immediatement
+        fetchTickers().then(() => loadChart());
         if (!chartRefreshInterval) {
             chartRefreshInterval = setInterval(() => {
                 if (currentTab === 'charts') { fetchTickers(); loadChart(); }
@@ -301,15 +303,22 @@ function detectFVG(candles) {
     return fvgs;
 }
 
-function drawFVG() {
-    if (!vpCanvas || !chartInstance || !candleSeries || !lastCandles.length) return;
+function toggleFVG() {
+    showFVG = !showFVG;
+    const btn = document.getElementById('fvg-toggle');
+    btn.textContent = showFVG ? 'FVG ON' : 'FVG OFF';
+    btn.classList.toggle('active', showFVG);
+    drawFVG();
+}
 
+function drawFVG() {
+    if (!vpCanvas || !chartInstance || !candleSeries) return;
     const container = document.getElementById('chart-container');
     vpCanvas.width = container.clientWidth;
     vpCanvas.height = container.clientHeight;
-
     const ctx = vpCanvas.getContext('2d');
     ctx.clearRect(0, 0, vpCanvas.width, vpCanvas.height);
+    if (!showFVG || !lastCandles.length) return;
 
     const fvgs = detectFVG(lastCandles);
     const timeScale = chartInstance.timeScale();
@@ -411,23 +420,27 @@ async function loadChart() {
 
         // Ajuster UTC -> heure locale
         const tzOffset = new Date().getTimezoneOffset() * -60;
-
-        candleSeries.setData(candles.map(c => ({
+        const adjusted = candles.map(c => ({
             time: c.time + tzOffset,
             open: c.open,
             high: c.high,
             low: c.low,
             close: c.close,
+            volume: c.volume,
+        }));
+
+        candleSeries.setData(adjusted.map(c => ({
+            time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
         })));
 
-        volumeSeries.setData(candles.map(c => ({
-            time: c.time + tzOffset,
+        volumeSeries.setData(adjusted.map(c => ({
+            time: c.time,
             value: c.volume,
             color: c.close >= c.open ? 'rgba(63,185,80,0.5)' : 'rgba(248,81,73,0.5)',
         })));
 
-        // Stocker les candles pour le volume profile
-        lastCandles = candles;
+        // Stocker les candles ajustees pour les FVG
+        lastCandles = adjusted;
 
         if (chartNeedsFit) {
             chartInstance.timeScale().fitContent();
