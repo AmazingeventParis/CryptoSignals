@@ -1,0 +1,16 @@
+{
+    "name": "Crypto Signals MEXC",
+    "short_name": "CryptoSignals",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#0d1117",
+    "theme_color": "#0d1117",
+    "description": "Signaux trading crypto MEXC Futures",
+    "icons": [
+        {
+            "src": "/static/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        }
+    ]
+}

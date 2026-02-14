@@ -1,0 +1,195 @@
+# ============================================
+# CRYPTO SIGNALS - Configuration
+# ============================================
+
+# --- Paires surveillees ---
+pairs:
+  - symbol: "XRP/USDT:USDT"
+    enabled: true
+  - symbol: "DOGE/USDT:USDT"
+    enabled: true
+  - symbol: "PEPE/USDT:USDT"
+    enabled: true
+  - symbol: "RUNE/USDT:USDT"
+    enabled: true
+  - symbol: "SOL/USDT:USDT"
+    enabled: true
+  - symbol: "KAITO/USDT:USDT"
+    enabled: true
+
+# --- Scanner ---
+scanner:
+  interval_seconds: 30          # Scan toutes les 30 secondes
+  modes:
+    - scalping
+    - swing
+
+# --- Mode Scalping (1-5 min) ---
+scalping:
+  timeframes:
+    analysis:
+      - "1m"
+      - "3m"
+    filter: "15m"
+
+  entry:
+    min_score: 65
+    setups:
+      - breakout
+      - retest
+      - ema_bounce
+    confirmation_candles: 1
+
+  stop_loss:
+    method: "atr"
+    atr_multiplier: 1.5
+    max_stop_pct: 0.5
+
+  take_profit:
+    tp1_rr: 1.0               # Risk:Reward 1:1 -> ferme 40%
+    tp1_close_pct: 40
+    tp2_rr: 1.5               # R:R 1.5:1 -> ferme 30%
+    tp2_close_pct: 30
+    tp3_rr: 2.5               # R:R 2.5:1 -> ferme 30%
+    tp3_close_pct: 30
+
+  break_even:
+    trigger: "tp1"
+
+  trailing_stop:
+    activate_after: "tp2"
+    trail_distance_atr: 0.8
+
+  cooldown:
+    after_loss_seconds: 180
+    after_win_seconds: 60
+    max_consecutive_losses: 3
+    pause_after_max_losses_seconds: 900
+
+  risk:
+    max_risk_per_trade_pct: 1.0
+    leverage_range: [10, 20]
+    margin_mode: "isolated"
+
+# --- Mode Swing Court (15-30 min) ---
+swing:
+  timeframes:
+    analysis:
+      - "5m"
+      - "15m"
+    filter: "1h"
+
+  entry:
+    min_score: 70
+    setups:
+      - breakout
+      - retest
+      - divergence
+      - ema_bounce
+    confirmation_candles: 2
+
+  stop_loss:
+    method: "structure"
+    buffer_atr: 0.5
+    max_stop_pct: 1.0
+
+  take_profit:
+    tp1_rr: 1.5
+    tp1_close_pct: 33
+    tp2_rr: 2.5
+    tp2_close_pct: 33
+    tp3_rr: 4.0
+    tp3_close_pct: 34
+
+  break_even:
+    trigger: "tp1"
+
+  trailing_stop:
+    activate_after: "tp2"
+    trail_distance_atr: 1.2
+
+  cooldown:
+    after_loss_seconds: 300
+    after_win_seconds: 120
+    max_consecutive_losses: 3
+    pause_after_max_losses_seconds: 1800
+
+  risk:
+    max_risk_per_trade_pct: 1.0
+    leverage_range: [10, 15]
+    margin_mode: "isolated"
+
+# --- Couche A: Tradeability Filter ---
+tradeability:
+  min_score: 0.6               # Score minimum pour etre tradable
+  weights:
+    volatility: 0.20
+    volume: 0.20
+    spread: 0.20
+    depth: 0.15
+    funding: 0.15
+    oi_stability: 0.10
+  thresholds:
+    # Volatilite
+    atr_min_ratio: 0.5         # ATR actuel > 0.5x moyenne
+    atr_max_ratio: 3.0         # ATR actuel < 3x moyenne
+    # Volume
+    volume_min_ratio: 0.4      # Volume > 0.4x moyenne
+    # Spread
+    spread_max_scalp: 0.05     # Max 0.05% pour scalping
+    spread_max_swing: 0.08     # Max 0.08% pour swing
+    spread_kill: 0.15          # > 0.15% = NON-TRADABLE immediat
+    # Funding
+    funding_max: 0.1           # |funding| < 0.1%
+    funding_kill: 0.3          # |funding| > 0.3% = kill
+    # OI
+    oi_drop_max_pct: 5.0       # Chute OI < 5% en 5min
+
+# --- Couche B: Direction Filter ---
+direction:
+  ema_fast: 20
+  ema_slow: 50
+  ema_neutral_threshold: 0.1   # Ecart < 0.1% = NEUTRAL
+  rsi_period: 14
+  rsi_long_threshold: 55
+  rsi_short_threshold: 45
+  structure_lookback: 20       # Bougies pour analyser HH/HL/LH/LL
+
+# --- Couche C: Entry Triggers ---
+entry:
+  # Breakout compression
+  bb_period: 20
+  bb_std: 2
+  bb_squeeze_threshold: 0.02   # Bandwidth < 2% = compression
+  volume_spike_ratio: 1.5      # Volume > 1.5x moyenne = spike
+
+  # Retest
+  retest_buffer_pct: 0.1       # Zone de retest +/- 0.1%
+  rejection_wick_ratio: 0.5    # Meche > 50% du corps
+
+  # Divergence
+  divergence_lookback: 14
+
+  # EMA bounce
+  ema_bounce_proximity_pct: 0.15  # Prix a +/- 0.15% de EMA20
+
+# --- Scoring ---
+scoring:
+  weights:
+    tradeability: 0.25
+    direction: 0.25
+    setup: 0.50
+  setup_components:
+    pattern_quality: 30
+    volume_confirmation: 20
+    risk_reward: 25
+    confluence: 25
+  thresholds:
+    strong: 80
+    medium: 65
+    weak: 50
+
+# --- Dashboard ---
+dashboard:
+  host: "0.0.0.0"
+  port: 8000
