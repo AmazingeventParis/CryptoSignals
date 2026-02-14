@@ -293,8 +293,11 @@ async function loadChart() {
         const candles = data.candles || [];
         if (!candles.length) return;
 
+        // Ajuster UTC -> heure locale
+        const tzOffset = new Date().getTimezoneOffset() * -60;
+
         candleSeries.setData(candles.map(c => ({
-            time: c.time,
+            time: c.time + tzOffset,
             open: c.open,
             high: c.high,
             low: c.low,
@@ -302,7 +305,7 @@ async function loadChart() {
         })));
 
         volumeSeries.setData(candles.map(c => ({
-            time: c.time,
+            time: c.time + tzOffset,
             value: c.volume,
             color: c.close >= c.open ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)',
         })));
