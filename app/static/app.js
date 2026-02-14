@@ -14,6 +14,8 @@ let vpCanvas = null;
 let showFVG = true;
 let showVolume = true;
 let preloadedCandles = null;
+let mexcWs = null;
+let wsReconnectTimer = null;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -184,6 +186,7 @@ function renderTrades(trades) {
 
 // --- Tabs ---
 function switchTab(tab) {
+    if (currentTab === 'charts' && tab !== 'charts') disconnectMexcWs();
     currentTab = tab;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -206,11 +209,8 @@ function switchTab(tab) {
         }
         fetchTickers(); // en parallele
         if (!chartRefreshInterval) {
+            // Tickers refresh (prix dans les badges)
             chartRefreshInterval = setInterval(() => {
-                if (currentTab === 'charts') loadChart();
-            }, 3000); // refresh bougies toutes les 3s
-            // Tickers moins souvent (prix dans les badges)
-            setInterval(() => {
                 if (currentTab === 'charts') fetchTickers();
             }, 15000);
         }
@@ -492,6 +492,9 @@ async function loadChart() {
 
         // Dessiner les Fair Value Gaps
         setTimeout(() => drawFVG(), 50);
+
+        // Connecter WebSocket pour updates temps reel
+        connectMexcWs();
     } catch (e) {
         console.error('Erreur chart:', e);
     }
@@ -504,6 +507,107 @@ function getDecimals(price) {
     if (price >= 1) return 4;
     if (price >= 0.01) return 6;
     return 8;
+}
+
+// --- WebSocket MEXC temps reel ---
+const TF_MAP = {
+    '1m': 'Min1', '3m': 'Min3', '5m': 'Min5',
+    '15m': 'Min15', '1h': 'Min60', '4h': 'Hour4',
+};
+
+function pairToMexcSymbol(pair) {
+    // "XRP/USDT:USDT" -> "XRP_USDT"
+    return pair.split('/')[0] + '_USDT';
+}
+
+function connectMexcWs() {
+    if (mexcWs) { mexcWs.close(); mexcWs = null; }
+    if (!selectedPair) return;
+
+    const symbol = pairToMexcSymbol(selectedPair);
+    const interval = TF_MAP[selectedTimeframe] || 'Min5';
+
+    mexcWs = new WebSocket('wss://contract.mexc.com/edge');
+
+    mexcWs.onopen = () => {
+        mexcWs.send(JSON.stringify({
+            method: 'sub.kline',
+            param: { symbol: symbol, interval: interval },
+        }));
+        // Ping toutes les 20s pour garder la connexion
+        mexcWs._pingInterval = setInterval(() => {
+            if (mexcWs && mexcWs.readyState === 1) mexcWs.send('{"method":"ping"}');
+        }, 20000);
+    };
+
+    mexcWs.onmessage = (evt) => {
+        try {
+            const msg = JSON.parse(evt.data);
+            if (msg.channel === 'push.kline' && msg.data) {
+                updateCandleRealtime(msg.data);
+            }
+        } catch {}
+    };
+
+    mexcWs.onclose = () => {
+        if (mexcWs && mexcWs._pingInterval) clearInterval(mexcWs._pingInterval);
+        // Reconnexion auto
+        if (currentTab === 'charts') {
+            wsReconnectTimer = setTimeout(connectMexcWs, 3000);
+        }
+    };
+
+    mexcWs.onerror = () => { mexcWs.close(); };
+}
+
+function updateCandleRealtime(data) {
+    if (!candleSeries || !volumeSeries || !lastCandles.length) return;
+
+    const tzOffset = new Date().getTimezoneOffset() * -60;
+    const time = data.t + tzOffset;
+    const candle = {
+        time: time,
+        open: parseFloat(data.o),
+        high: parseFloat(data.h),
+        low: parseFloat(data.l),
+        close: parseFloat(data.c),
+        volume: parseFloat(data.v),
+    };
+
+    // Mettre a jour la derniere bougie ou en ajouter une nouvelle
+    const last = lastCandles[lastCandles.length - 1];
+    if (last && last.time === candle.time) {
+        // Meme bougie -> mise a jour
+        last.open = candle.open;
+        last.high = candle.high;
+        last.low = candle.low;
+        last.close = candle.close;
+        last.volume = candle.volume;
+    } else if (!last || candle.time > last.time) {
+        // Nouvelle bougie
+        lastCandles.push(candle);
+    }
+
+    candleSeries.update({
+        time: candle.time, open: candle.open, high: candle.high,
+        low: candle.low, close: candle.close,
+    });
+
+    volumeSeries.update({
+        time: candle.time,
+        value: candle.volume,
+        color: candle.close >= candle.open ? 'rgba(63,185,80,0.5)' : 'rgba(248,81,73,0.5)',
+    });
+}
+
+function disconnectMexcWs() {
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+    if (mexcWs) {
+        if (mexcWs._pingInterval) clearInterval(mexcWs._pingInterval);
+        mexcWs.onclose = null;
+        mexcWs.close();
+        mexcWs = null;
+    }
 }
 
 // --- PWA ---
