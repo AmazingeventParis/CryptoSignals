@@ -509,55 +509,35 @@ function getDecimals(price) {
     return 8;
 }
 
-// --- WebSocket MEXC temps reel ---
-const TF_MAP = {
-    '1m': 'Min1', '3m': 'Min3', '5m': 'Min5',
-    '15m': 'Min15', '1h': 'Min60', '4h': 'Hour4',
-};
-
-function pairToMexcSymbol(pair) {
-    // "XRP/USDT:USDT" -> "XRP_USDT"
-    return pair.split('/')[0] + '_USDT';
-}
-
+// --- WebSocket temps reel via serveur ---
 function connectMexcWs() {
-    if (mexcWs) { mexcWs.close(); mexcWs = null; }
+    disconnectMexcWs();
     if (!selectedPair) return;
 
-    const symbol = pairToMexcSymbol(selectedPair);
-    const interval = TF_MAP[selectedTimeframe] || 'Min5';
+    const sym = selectedPair.replace('/', '-');
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${location.host}/ws/kline/${sym}/${selectedTimeframe}`;
 
-    mexcWs = new WebSocket('wss://contract.mexc.com/edge');
+    mexcWs = new WebSocket(wsUrl);
 
     mexcWs.onopen = () => {
-        mexcWs.send(JSON.stringify({
-            method: 'sub.kline',
-            param: { symbol: symbol, interval: interval },
-        }));
-        // Ping toutes les 20s pour garder la connexion
-        mexcWs._pingInterval = setInterval(() => {
-            if (mexcWs && mexcWs.readyState === 1) mexcWs.send('{"method":"ping"}');
-        }, 20000);
+        console.log('WS connecte:', sym, selectedTimeframe);
     };
 
     mexcWs.onmessage = (evt) => {
         try {
-            const msg = JSON.parse(evt.data);
-            if (msg.channel === 'push.kline' && msg.data) {
-                updateCandleRealtime(msg.data);
-            }
+            const data = JSON.parse(evt.data);
+            updateCandleRealtime(data);
         } catch {}
     };
 
     mexcWs.onclose = () => {
-        if (mexcWs && mexcWs._pingInterval) clearInterval(mexcWs._pingInterval);
-        // Reconnexion auto
         if (currentTab === 'charts') {
             wsReconnectTimer = setTimeout(connectMexcWs, 3000);
         }
     };
 
-    mexcWs.onerror = () => { mexcWs.close(); };
+    mexcWs.onerror = () => { if (mexcWs) mexcWs.close(); };
 }
 
 function updateCandleRealtime(data) {
