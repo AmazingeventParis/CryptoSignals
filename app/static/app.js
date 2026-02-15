@@ -79,6 +79,8 @@ async function fetchStats() {
         const pnl = data.total_pnl || 0;
 
         document.getElementById('stat-trades').textContent = trades;
+        document.getElementById('stat-wins').textContent = wins;
+        document.getElementById('stat-losses').textContent = data.losses || 0;
         document.getElementById('stat-winrate').textContent = `${winRate}%`;
         const pnlEl = document.getElementById('stat-pnl');
         pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
