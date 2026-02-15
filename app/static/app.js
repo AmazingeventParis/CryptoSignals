@@ -816,6 +816,7 @@ function connectPosMexcWs() {
     posSubscribedSymbols = symbols;
 
     posMexcWs.onopen = () => {
+        console.log('MEXC WS connecte pour positions:', [...mexcSymbols.values()]);
         // S'abonner au deal de chaque symbol (chaque trade = prix instantane)
         mexcSymbols.forEach((ms, s) => {
             posMexcWs.send(JSON.stringify({
@@ -871,9 +872,9 @@ function disconnectPosMexcWs() {
 
 function updatePositionsUI() {
     const result = positionsData.map(p => {
-        const cur = livePrices[p.symbol] || 0;
+        const cur = livePrices[p.symbol] || p.entry_price;
         return calcLivePnl(p, cur);
-    }).filter(p => p.current_price > 0);
+    });
     renderLivePositions(result);
 }
 
