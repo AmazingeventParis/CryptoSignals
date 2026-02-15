@@ -356,6 +356,37 @@ body {
     transition: all 0.15s; letter-spacing: 0.5px;
 }
 .pos-close-btn:hover { background: var(--red); color: #fff; }
+.pos-chart-btn {
+    padding: 4px 10px; border-radius: 4px;
+    background: rgba(88,166,255,0.15); border: 1px solid rgba(88,166,255,0.4);
+    color: var(--blue); font-size: 11px; font-weight: 700; cursor: pointer;
+    transition: all 0.15s; letter-spacing: 0.5px;
+}
+.pos-chart-btn:hover { background: var(--blue); color: #fff; }
+
+/* Chart Modal (large) */
+.chart-modal-lg {
+    max-width: 900px;
+    width: 95vw;
+}
+.chart-modal-controls {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+}
+.chart-modal-controls .tf-selector {
+    display: flex; gap: 4px; flex-wrap: wrap;
+}
+.popup-tf-btn {
+    background: none; border: 1px solid var(--border); color: var(--text-secondary);
+    padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;
+}
+.popup-tf-btn:hover { color: var(--text); }
+.popup-tf-btn.active { background: var(--bg-card); color: var(--text); border-color: var(--blue); }
+.popup-chart-container {
+    width: 100%; height: 480px;
+    background: var(--bg-card);
+    position: relative;
+}
 
 /* ============================================
    DESKTOP LAYOUT (2 colonnes: sidebar + main)
@@ -416,31 +447,6 @@ body {
     }
     .sidebar .stat-value {
         font-size: 16px;
-    }
-
-    /* Positions dans sidebar */
-    .sidebar .pos-card {
-        padding: 12px;
-    }
-    .sidebar .pos-prices {
-        grid-template-columns: repeat(3, 1fr);
-        gap: 4px;
-    }
-    .sidebar .pos-price-val {
-        font-size: 13px;
-    }
-    .sidebar .pos-symbol {
-        font-size: 14px;
-    }
-    .sidebar .pos-pnl {
-        font-size: 16px;
-    }
-    .sidebar .pos-levels {
-        gap: 4px;
-    }
-    .sidebar .pos-level {
-        font-size: 10px;
-        padding: 2px 5px;
     }
 
     /* Main content: tabs sticky en haut */

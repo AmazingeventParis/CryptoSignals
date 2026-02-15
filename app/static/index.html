@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=34">
+    <link rel="stylesheet" href="/static/style.css?v=35">
 </head>
 <body>
     <div id="app">
@@ -28,11 +28,15 @@
                 </div>
             </header>
 
-            <!-- Stats cards -->
+            <!-- Stats cards (ordre: P&L, WinRate, Gagnes, Perdus, Signaux, Trades) -->
             <div class="stats-row">
                 <div class="stat-card">
-                    <div class="stat-value" id="stat-trades">0</div>
-                    <div class="stat-label">Trades</div>
+                    <div class="stat-value" id="stat-pnl">$0</div>
+                    <div class="stat-label">P&L Total</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-winrate">0%</div>
+                    <div class="stat-label">Win Rate</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-value" id="stat-wins" style="color:var(--green)">0</div>
@@ -43,25 +47,21 @@
                     <div class="stat-label">Perdus</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value" id="stat-winrate">0%</div>
-                    <div class="stat-label">Win Rate</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-pnl">$0</div>
-                    <div class="stat-label">P&L Total</div>
-                </div>
-                <div class="stat-card">
                     <div class="stat-value" id="stat-active">0</div>
                     <div class="stat-label">Signaux actifs</div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-trades">0</div>
+                    <div class="stat-label">Trades</div>
+                </div>
             </div>
-
-            <!-- Positions actives (live) -->
-            <div id="positions-live" class="positions-live"></div>
         </aside>
 
         <!-- MAIN CONTENT (droite sur desktop) -->
         <main class="main-content">
+            <!-- Positions actives (live) - en haut du contenu principal -->
+            <div id="positions-live" class="positions-live"></div>
+
             <!-- Tabs -->
             <div class="tabs">
                 <button class="tab active" onclick="switchTab('signals')">Signaux</button>
@@ -89,6 +89,8 @@
                         <button class="tf-btn" onclick="changeTimeframe('15m')">15m</button>
                         <button class="tf-btn" onclick="changeTimeframe('1h')">1h</button>
                         <button class="tf-btn" onclick="changeTimeframe('4h')">4h</button>
+                        <button class="tf-btn" onclick="changeTimeframe('1d')">1j</button>
+                        <button class="tf-btn" onclick="changeTimeframe('1w')">1s</button>
                         <button id="vol-toggle" class="tf-btn active" onclick="toggleVolume()" style="margin-left:8px;border-color:var(--blue)">VOL ON</button>
                         <button id="fvg-toggle" class="tf-btn active" onclick="toggleFVG()" style="border-color:var(--green)">FVG ON</button>
                     </div>
@@ -132,6 +134,31 @@
             </div>
         </div>
 
+        <!-- Modal Chart Popup (pour positions) -->
+        <div id="chart-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeChartModal()">
+            <div class="modal chart-modal-lg">
+                <div class="modal-header">
+                    <span id="chart-modal-title">Chart</span>
+                    <button class="btn-icon" onclick="closeChartModal()">&times;</button>
+                </div>
+                <div class="chart-modal-controls">
+                    <div class="tf-selector">
+                        <button class="popup-tf-btn" onclick="popupChangeTimeframe('1m')">1m</button>
+                        <button class="popup-tf-btn" onclick="popupChangeTimeframe('3m')">3m</button>
+                        <button class="popup-tf-btn active" onclick="popupChangeTimeframe('5m')">5m</button>
+                        <button class="popup-tf-btn" onclick="popupChangeTimeframe('15m')">15m</button>
+                        <button class="popup-tf-btn" onclick="popupChangeTimeframe('1h')">1h</button>
+                        <button class="popup-tf-btn" onclick="popupChangeTimeframe('4h')">4h</button>
+                        <button class="popup-tf-btn" onclick="popupChangeTimeframe('1d')">1j</button>
+                        <button class="popup-tf-btn" onclick="popupChangeTimeframe('1w')">1s</button>
+                        <button id="popup-vol-toggle" class="popup-tf-btn active" onclick="popupToggleVolume()" style="margin-left:8px;border-color:var(--blue)">VOL</button>
+                        <button id="popup-fvg-toggle" class="popup-tf-btn active" onclick="popupToggleFVG()" style="border-color:var(--green)">FVG</button>
+                    </div>
+                </div>
+                <div id="popup-chart-container" class="popup-chart-container"></div>
+            </div>
+        </div>
+
         <!-- Footer -->
         <footer class="footer">
             <p>&#x26a0; Ceci n'est PAS un conseil financier. Trading a vos risques et perils.</p>
@@ -148,6 +175,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=33"></script>
+    <script src="/static/app.js?v=35"></script>
 </body>
 </html>

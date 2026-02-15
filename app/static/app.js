@@ -1011,6 +1011,7 @@ function renderLivePositions(positions) {
                     <span class="pos-level pos-level-tp ${p.tp1_hit ? 'hit' : ''}">TP1 ${p.tp1.toFixed(dec)}</span>
                     <span class="pos-level pos-level-tp ${p.tp2_hit ? 'hit' : ''}">TP2 ${p.tp2.toFixed(dec)}</span>
                     <span class="pos-level pos-level-tp ${p.tp3_hit ? 'hit' : ''}">TP3 ${p.tp3.toFixed(dec)}</span>
+                    <button class="pos-chart-btn" onclick="openChartModal('${p.symbol}')">CHART</button>
                     <button class="pos-close-btn" onclick="closePosition(${p.id}, this)">FERMER</button>
                 </div>
             </div>`;
@@ -1048,5 +1049,240 @@ async function resetPaper() {
         console.error('Reset erreur:', e);
     }
 }
+
+// ============================================
+// POPUP CHART (pour positions)
+// ============================================
+let popupChart = null;
+let popupCandleSeries = null;
+let popupVolumeSeries = null;
+let popupFvgCanvas = null;
+let popupLastCandles = [];
+let popupPair = null;
+let popupTimeframe = '5m';
+let popupShowVol = true;
+let popupShowFVG = true;
+let popupWs = null;
+
+function openChartModal(symbol) {
+    popupPair = symbol;
+    popupTimeframe = '5m';
+    popupShowVol = true;
+    popupShowFVG = true;
+
+    document.getElementById('chart-modal-title').textContent = symbol.split(':')[0];
+    document.getElementById('chart-modal').style.display = 'flex';
+
+    // Reset TF buttons
+    document.querySelectorAll('.popup-tf-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('.popup-tf-btn[onclick="popupChangeTimeframe(\'5m\')"]').classList.add('active');
+    document.getElementById('popup-vol-toggle').classList.add('active');
+    document.getElementById('popup-fvg-toggle').classList.add('active');
+
+    // Init chart apres un frame (pour que le container ait sa taille)
+    requestAnimationFrame(() => {
+        initPopupChart();
+        loadPopupChart();
+    });
+}
+
+function closeChartModal() {
+    document.getElementById('chart-modal').style.display = 'none';
+    disconnectPopupWs();
+    if (popupChart) {
+        popupChart.remove();
+        popupChart = null;
+        popupCandleSeries = null;
+        popupVolumeSeries = null;
+    }
+    if (popupFvgCanvas) {
+        popupFvgCanvas.remove();
+        popupFvgCanvas = null;
+    }
+    popupLastCandles = [];
+}
+
+function initPopupChart() {
+    const container = document.getElementById('popup-chart-container');
+    container.innerHTML = '';
+    if (popupChart) { popupChart.remove(); popupChart = null; }
+
+    popupChart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: container.clientHeight || 480,
+        layout: { background: { color: '#161b22' }, textColor: '#e6edf3' },
+        grid: { vertLines: { color: '#30363d' }, horzLines: { color: '#30363d' } },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: '#30363d' },
+        timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+    });
+
+    popupCandleSeries = popupChart.addCandlestickSeries({
+        upColor: '#3fb950', downColor: '#f85149',
+        borderUpColor: '#3fb950', borderDownColor: '#f85149',
+        wickUpColor: '#3fb950', wickDownColor: '#f85149',
+    });
+
+    popupVolumeSeries = popupChart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+        scaleMargins: { top: 0.8, bottom: 0 },
+    });
+
+    popupFvgCanvas = document.createElement('canvas');
+    popupFvgCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:2;';
+    container.style.position = 'relative';
+    container.appendChild(popupFvgCanvas);
+
+    popupChart.timeScale().subscribeVisibleLogicalRangeChange(() => drawPopupFVG());
+
+    // Resize handler
+    const resizeObs = new ResizeObserver(() => {
+        if (popupChart && document.getElementById('chart-modal').style.display !== 'none') {
+            popupChart.applyOptions({ width: container.clientWidth });
+            drawPopupFVG();
+        }
+    });
+    resizeObs.observe(container);
+}
+
+async function loadPopupChart() {
+    if (!popupPair || !popupChart) return;
+    try {
+        const sym = popupPair.replace('/', '-');
+        const res = await fetch(`${API}/api/ohlcv/${sym}?timeframe=${popupTimeframe}&limit=300`);
+        const data = await res.json();
+        const candles = data.candles || [];
+        if (!candles.length) return;
+
+        const price = candles[candles.length - 1].close;
+        let precision, minMove;
+        if (price >= 100)       { precision = 2; minMove = 0.01; }
+        else if (price >= 1)    { precision = 4; minMove = 0.0001; }
+        else if (price >= 0.01) { precision = 4; minMove = 0.0001; }
+        else                    { precision = 8; minMove = 0.00000001; }
+
+        popupCandleSeries.applyOptions({ priceFormat: { type: 'price', precision, minMove } });
+
+        const tzOffset = new Date().getTimezoneOffset() * -60;
+        const adjusted = candles.map(c => ({
+            time: c.time + tzOffset,
+            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+        }));
+
+        popupCandleSeries.setData(adjusted.map(c => ({
+            time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
+        })));
+
+        popupVolumeSeries.setData(adjusted.map(c => ({
+            time: c.time, value: c.volume,
+            color: c.close >= c.open ? 'rgba(63,185,80,0.5)' : 'rgba(248,81,73,0.5)',
+        })));
+
+        popupLastCandles = adjusted;
+        popupChart.timeScale().fitContent();
+        setTimeout(() => drawPopupFVG(), 50);
+        connectPopupWs();
+    } catch (e) {
+        console.error('Popup chart error:', e);
+    }
+}
+
+function popupChangeTimeframe(tf) {
+    popupTimeframe = tf;
+    document.querySelectorAll('.popup-tf-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.popup-tf-btn[onclick="popupChangeTimeframe('${tf}')"]`).classList.add('active');
+    loadPopupChart();
+}
+
+function popupToggleVolume() {
+    popupShowVol = !popupShowVol;
+    const btn = document.getElementById('popup-vol-toggle');
+    btn.textContent = popupShowVol ? 'VOL' : 'VOL';
+    btn.classList.toggle('active', popupShowVol);
+    if (popupVolumeSeries) popupVolumeSeries.applyOptions({ visible: popupShowVol });
+}
+
+function popupToggleFVG() {
+    popupShowFVG = !popupShowFVG;
+    const btn = document.getElementById('popup-fvg-toggle');
+    btn.textContent = popupShowFVG ? 'FVG' : 'FVG';
+    btn.classList.toggle('active', popupShowFVG);
+    drawPopupFVG();
+}
+
+function drawPopupFVG() {
+    if (!popupFvgCanvas || !popupChart || !popupCandleSeries) return;
+    const container = document.getElementById('popup-chart-container');
+    popupFvgCanvas.width = container.clientWidth;
+    popupFvgCanvas.height = container.clientHeight;
+    const ctx = popupFvgCanvas.getContext('2d');
+    ctx.clearRect(0, 0, popupFvgCanvas.width, popupFvgCanvas.height);
+    if (!popupShowFVG || !popupLastCandles.length) return;
+
+    const fvgs = detectFVG(popupLastCandles);
+    const timeScale = popupChart.timeScale();
+
+    fvgs.forEach(fvg => {
+        const y1 = popupCandleSeries.priceToCoordinate(fvg.top);
+        const y2 = popupCandleSeries.priceToCoordinate(fvg.bottom);
+        const x1 = timeScale.timeToCoordinate(fvg.timeStart);
+        const x2 = fvg.filled ? timeScale.timeToCoordinate(fvg.timeEnd) : popupFvgCanvas.width;
+        if (y1 === null || y2 === null || x1 === null) return;
+        const y = Math.min(y1, y2);
+        const h = Math.abs(y2 - y1);
+        const w = (x2 !== null ? x2 : popupFvgCanvas.width) - x1;
+        if (w <= 0 || h <= 0) return;
+        const alpha = fvg.filled ? 0.12 : 0.3;
+        ctx.fillStyle = fvg.type === 'bull'
+            ? `rgba(38, 166, 154, ${alpha})`
+            : `rgba(239, 83, 80, ${alpha})`;
+        ctx.fillRect(x1, y, w, h);
+        if (!fvg.filled) {
+            ctx.strokeStyle = fvg.type === 'bull' ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x1, y, w, h);
+        }
+    });
+}
+
+function connectPopupWs() {
+    disconnectPopupWs();
+    if (!popupPair) return;
+    const sym = popupPair.replace('/', '-');
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    popupWs = new WebSocket(`${proto}//${location.host}/ws/kline/${sym}/${popupTimeframe}`);
+    popupWs.onmessage = (evt) => {
+        try {
+            const data = JSON.parse(evt.data);
+            if (!popupCandleSeries || !popupVolumeSeries) return;
+            const tzOffset = new Date().getTimezoneOffset() * -60;
+            const time = data.t + tzOffset;
+            const candle = { time, open: data.o, high: data.h, low: data.l, close: data.c, volume: data.q || data.a || 0 };
+            const last = popupLastCandles[popupLastCandles.length - 1];
+            if (last && last.time === candle.time) {
+                last.open = candle.open; last.high = candle.high; last.low = candle.low;
+                last.close = candle.close; last.volume = candle.volume;
+            } else if (!last || candle.time > last.time) {
+                popupLastCandles.push(candle);
+            }
+            popupCandleSeries.update({ time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close });
+            popupVolumeSeries.update({ time: candle.time, value: candle.volume, color: candle.close >= candle.open ? 'rgba(63,185,80,0.5)' : 'rgba(248,81,73,0.5)' });
+        } catch {}
+    };
+    popupWs.onclose = () => { popupWs = null; };
+    popupWs.onerror = () => { if (popupWs) popupWs.close(); };
+}
+
+function disconnectPopupWs() {
+    if (popupWs) { popupWs.onclose = null; popupWs.close(); popupWs = null; }
+}
+
+// Fermer chart modal avec Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('chart-modal').style.display !== 'none') {
+        closeChartModal();
+    }
+});
 
 // PWA desactive - pas de Service Worker (evite les problemes de cache)
