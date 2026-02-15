@@ -766,46 +766,148 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeModal();
 });
 
-// --- Positions live (WebSocket temps reel) ---
-let posWs = null;
-let posWsReconnect = null;
-
-function connectPositionsWs() {
-    if (posWs && posWs.readyState <= 1) return; // deja connecte
-
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${proto}//${location.host}/ws/positions`;
-    posWs = new WebSocket(url);
-
-    posWs.onmessage = (evt) => {
-        try {
-            const data = JSON.parse(evt.data);
-            renderLivePositions(data.positions || []);
-        } catch {}
-    };
-
-    posWs.onclose = () => {
-        posWs = null;
-        posWsReconnect = setTimeout(connectPositionsWs, 2000);
-    };
-
-    posWs.onerror = () => { if (posWs) posWs.close(); };
-}
+// --- Positions live (WebSocket MEXC direct) ---
+let positionsData = [];   // positions depuis l'API
+let livePrices = {};      // symbol -> prix live
+let posMexcWs = null;
+let posMexcReconnect = null;
+let posSubscribedSymbols = new Set();
 
 async function fetchLivePositions() {
-    // Premier chargement via HTTP, puis le WS prend le relai
     try {
-        const res = await fetch(`${API}/api/positions/live`);
+        const res = await fetch(`${API}/api/positions`);
         const data = await res.json();
-        renderLivePositions(data.positions || []);
-        if (data.positions && data.positions.length > 0) {
-            connectPositionsWs();
+        positionsData = (data.positions || []).filter(p => p.state !== 'closed');
+
+        if (positionsData.length > 0) {
+            connectPosMexcWs();
+            updatePositionsUI();
+        } else {
+            disconnectPosMexcWs();
+            document.getElementById('positions-live').innerHTML = '';
         }
     } catch {
         document.getElementById('positions-live').innerHTML = '';
     }
-    // Toujours garder le WS connecte pour detecter les nouvelles positions
-    connectPositionsWs();
+}
+
+function connectPosMexcWs() {
+    const symbols = new Set(positionsData.map(p => p.symbol));
+    const mexcSymbols = new Map();
+    symbols.forEach(s => {
+        mexcSymbols.set(s, s.split(':')[0].replace('-', '_').replace('/', '_'));
+    });
+
+    // Si deja connecte aux memes symbols, ne rien faire
+    if (posMexcWs && posMexcWs.readyState === 1) {
+        const newSet = [...symbols].sort().join(',');
+        const oldSet = [...posSubscribedSymbols].sort().join(',');
+        if (newSet === oldSet) return;
+        // Symbols differents -> reconnecter
+        posMexcWs.close();
+    }
+
+    if (posMexcWs && posMexcWs.readyState <= 1) {
+        posMexcWs.onclose = null;
+        posMexcWs.close();
+    }
+
+    posMexcWs = new WebSocket('wss://contract.mexc.com/edge');
+    posSubscribedSymbols = symbols;
+
+    posMexcWs.onopen = () => {
+        // S'abonner au deal de chaque symbol (chaque trade = prix instantane)
+        mexcSymbols.forEach((ms, s) => {
+            posMexcWs.send(JSON.stringify({
+                method: 'sub.deal',
+                param: { symbol: ms }
+            }));
+        });
+        // Keepalive
+        posMexcWs._ping = setInterval(() => {
+            if (posMexcWs.readyState === 1) posMexcWs.send('{"method":"ping"}');
+        }, 20000);
+    };
+
+    posMexcWs.onmessage = (evt) => {
+        try {
+            const msg = JSON.parse(evt.data);
+            if (msg.channel === 'push.deal' && msg.data) {
+                const price = parseFloat(msg.data.p);
+                const mexcSym = msg.symbol || '';
+                if (price > 0) {
+                    // Retrouver le symbol original
+                    mexcSymbols.forEach((ms, s) => {
+                        if (ms === mexcSym) livePrices[s] = price;
+                    });
+                    updatePositionsUI();
+                }
+            }
+        } catch {}
+    };
+
+    posMexcWs.onclose = () => {
+        if (posMexcWs?._ping) clearInterval(posMexcWs._ping);
+        posMexcWs = null;
+        // Reconnecter si on a encore des positions
+        if (positionsData.length > 0) {
+            posMexcReconnect = setTimeout(connectPosMexcWs, 2000);
+        }
+    };
+
+    posMexcWs.onerror = () => { if (posMexcWs) posMexcWs.close(); };
+}
+
+function disconnectPosMexcWs() {
+    if (posMexcReconnect) { clearTimeout(posMexcReconnect); posMexcReconnect = null; }
+    if (posMexcWs) {
+        if (posMexcWs._ping) clearInterval(posMexcWs._ping);
+        posMexcWs.onclose = null;
+        posMexcWs.close();
+        posMexcWs = null;
+    }
+    posSubscribedSymbols = new Set();
+}
+
+function updatePositionsUI() {
+    const result = positionsData.map(p => {
+        const cur = livePrices[p.symbol] || 0;
+        return calcLivePnl(p, cur);
+    }).filter(p => p.current_price > 0);
+    renderLivePositions(result);
+}
+
+function calcLivePnl(pos, currentPrice) {
+    const entry = pos.entry_price;
+    const dir = pos.direction;
+    const origQty = pos.original_quantity;
+    const remQty = pos.remaining_quantity;
+    const margin = pos.margin_required || 1;
+
+    let realized = 0;
+    if (pos.tp1_hit) {
+        const q = origQty * ((pos.tp1_close_pct || 40) / 100);
+        realized += (dir === 'long' ? pos.tp1 - entry : entry - pos.tp1) * q;
+    }
+    if (pos.tp2_hit) {
+        const q = origQty * ((pos.tp2_close_pct || 30) / 100);
+        realized += (dir === 'long' ? pos.tp2 - entry : entry - pos.tp2) * q;
+    }
+
+    const diff = dir === 'long' ? currentPrice - entry : entry - currentPrice;
+    const unrealized = diff * remQty;
+    const total = realized + unrealized;
+    const pnlPct = (total / margin) * 100;
+
+    const sl = pos.stop_loss, tp3 = pos.tp3;
+    let progress = 50;
+    if (tp3 !== sl) {
+        progress = dir === 'long'
+            ? Math.max(0, Math.min(100, ((currentPrice - sl) / (tp3 - sl)) * 100))
+            : Math.max(0, Math.min(100, ((sl - currentPrice) / (sl - tp3)) * 100));
+    }
+
+    return { ...pos, current_price: currentPrice, total_pnl: total, pnl_pct: pnlPct, progress };
 }
 
 function renderLivePositions(positions) {
