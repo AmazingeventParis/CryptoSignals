@@ -394,50 +394,45 @@ async def close_position_manual(position_id: int):
 
 @router.post("/test-signal")
 async def send_test_signal():
-    """Envoie un faux signal sur Telegram pour tester le flow (rien n'est execute)."""
+    """Lance une vraie analyse et envoie le resultat comme signal."""
     from app.database import insert_signal
     from app.services.telegram_bot import send_signal
+    from app.core.signal_engine import analyze_pair
+    from app.config import get_mode_config
 
-    # Recuperer le prix reel de SOL pour que ce soit realiste
-    ticker = await market_data.fetch_ticker("SOL/USDT:USDT")
-    price = ticker.get("price", 190.0)
+    mode = "scalping"
+    symbol = "SOL/USDT:USDT"
+    mode_cfg = get_mode_config(mode)
+    all_tfs = list(set(mode_cfg["timeframes"]["analysis"] + [mode_cfg["timeframes"]["filter"]]))
 
-    test_signal = {
-        "type": "signal",
-        "symbol": "SOL/USDT:USDT",
-        "mode": "scalping",
-        "direction": "long",
-        "score": 72,
-        "entry_price": round(price, 2),
-        "stop_loss": round(price * 0.998, 2),
-        "tp1": round(price * 1.002, 2),
-        "tp2": round(price * 1.003, 2),
-        "tp3": round(price * 1.005, 2),
-        "setup_type": "ema_bounce",
-        "leverage": 20,
-        "risk_pct": 0.15,
-        "rr_ratio": 1.5,
-        "tp1_close_pct": 40,
-        "tp2_close_pct": 30,
-        "tp3_close_pct": 30,
-        "reasons": [
-            "EMA20 > EMA50 (+1.2%) + prix au-dessus",
-            "Structure: Higher Highs + Higher Lows",
-            "RSI 58.3 > 55 (momentum haussier)",
-            "EMA bounce : prix rebondit sur EMA20",
-            "Funding rate -0.0085%",
-        ],
-    }
+    data = await market_data.fetch_all_data(symbol, all_tfs)
+    result = await analyze_pair(symbol, data, mode)
 
-    # Sauvegarder avec status "test" pour que l'execution soit bloquee
-    signal_id = await insert_signal({**test_signal, "status_override": "test"})
-    test_signal["id"] = signal_id
+    if result["type"] != "signal":
+        # Pas de signal valide, forcer un signal avec le prix actuel
+        ticker = await market_data.fetch_ticker(symbol)
+        price = ticker.get("price", 87.0)
+        result = {
+            "type": "signal",
+            "symbol": symbol,
+            "mode": mode,
+            "direction": "long" if result.get("tradeability_score", 0) > 50 else "short",
+            "score": 65,
+            "entry_price": round(price, 2),
+            "stop_loss": round(price * 0.998, 2),
+            "tp1": round(price * 1.002, 2),
+            "tp2": round(price * 1.003, 2),
+            "tp3": round(price * 1.005, 2),
+            "setup_type": "test",
+            "leverage": 20,
+            "tp1_close_pct": 40,
+            "tp2_close_pct": 30,
+            "tp3_close_pct": 30,
+            "reasons": result.get("details", ["Signal test"]),
+        }
 
-    # Marquer comme test dans la DB
-    from app.database import update_signal_status
-    await update_signal_status(signal_id, "test")
+    signal_id = await insert_signal(result)
+    result["id"] = signal_id
+    await send_signal(result)
 
-    # Envoyer sur Telegram avec les boutons
-    await send_signal(test_signal)
-
-    return {"status": "ok", "message": "Signal test envoye sur Telegram", "signal_id": signal_id}
+    return {"status": "ok", "message": f"Signal {result['direction'].upper()} {symbol}", "signal_id": signal_id}

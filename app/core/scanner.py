@@ -19,6 +19,7 @@ class Scanner:
         self.last_signals: dict[str, dict] = {}
         self.cooldowns: dict[str, datetime] = {}
         self.consecutive_losses: dict[str, int] = {}
+        self._signal_timestamps: dict[str, datetime] = {}  # symbol -> dernier signal
 
     async def start(self):
         self.running = True
@@ -73,10 +74,21 @@ class Scanner:
                         if self._is_duplicate_signal(key, result):
                             continue
 
+                        # Bloquer si position active sur ce symbol
+                        if self._has_active_position(symbol):
+                            logger.debug(f"Signal {symbol} ignore: position deja ouverte")
+                            continue
+
+                        # Bloquer si signal recent sur ce symbol (anti flip-flop 5 min)
+                        if self._has_recent_signal(symbol):
+                            logger.debug(f"Signal {symbol} ignore: cooldown anti flip-flop")
+                            continue
+
                         # Sauvegarder
                         signal_id = await insert_signal(result)
                         result["id"] = signal_id
                         self.last_signals[key] = result
+                        self._signal_timestamps[symbol] = datetime.utcnow()
 
                         # Envoyer sur Telegram
                         await send_signal(result)
@@ -99,6 +111,21 @@ class Scanner:
 
                 # Petit delai entre chaque paire pour eviter rate limit
                 await asyncio.sleep(1)
+
+    def _has_active_position(self, symbol: str) -> bool:
+        """Verifie si une position est ouverte sur ce symbol."""
+        from app.core.position_monitor import position_monitor
+        return any(
+            p["symbol"] == symbol and p.get("state") != "closed"
+            for p in position_monitor._positions.values()
+        )
+
+    def _has_recent_signal(self, symbol: str) -> bool:
+        """Cooldown 5 min par symbol pour eviter flip-flop LONG/SHORT."""
+        last = self._signal_timestamps.get(symbol)
+        if not last:
+            return False
+        return (datetime.utcnow() - last).total_seconds() < 300
 
     def _is_duplicate_signal(self, key: str, new_signal: dict) -> bool:
         if key not in self.last_signals:
