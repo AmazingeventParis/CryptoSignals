@@ -139,7 +139,8 @@ function renderSignals(signals) {
 
         // Boutons d'execution (seulement si pas deja execute et < 20s)
         const status = (s.status || '').toLowerCase();
-        const signalTime = new Date(s.timestamp || s.created_at).getTime();
+        const ts = s.timestamp || s.created_at;
+        const signalTime = new Date(ts.endsWith('Z') ? ts : ts + 'Z').getTime();
         const ageSeconds = Math.floor((Date.now() - signalTime) / 1000);
         const EXPIRE_SEC = 20;
         const isExpired = ageSeconds > EXPIRE_SEC;
@@ -1006,10 +1007,32 @@ function renderLivePositions(positions) {
                     <span class="pos-level pos-level-tp ${p.tp1_hit ? 'hit' : ''}">TP1 ${p.tp1.toFixed(dec)}</span>
                     <span class="pos-level pos-level-tp ${p.tp2_hit ? 'hit' : ''}">TP2 ${p.tp2.toFixed(dec)}</span>
                     <span class="pos-level pos-level-tp ${p.tp3_hit ? 'hit' : ''}">TP3 ${p.tp3.toFixed(dec)}</span>
+                    <button class="pos-close-btn" onclick="closePosition(${p.id})">FERMER</button>
                 </div>
             </div>`;
         }).join('')}
     `;
+}
+
+// --- Fermer position manuellement ---
+async function closePosition(posId) {
+    if (!confirm('Fermer cette position au prix actuel ?')) return;
+
+    try {
+        const res = await fetch(`${API}/api/positions/${posId}/close`, { method: 'POST' });
+        const data = await res.json();
+
+        if (data.success) {
+            const sign = data.pnl_usd >= 0 ? '+' : '';
+            alert(`Position fermee !\nP&L: ${sign}${data.pnl_usd.toFixed(2)}$ (${sign}${data.pnl_pct.toFixed(1)}%)\nPrix sortie: ${data.exit_price}`);
+            refreshAll();
+        } else {
+            alert('Erreur: ' + (data.error || 'Impossible de fermer'));
+        }
+    } catch (e) {
+        console.error('Erreur close position:', e);
+        alert('Erreur reseau');
+    }
 }
 
 // --- Paper Trading Reset ---

@@ -289,6 +289,109 @@ async def paper_reset():
     return {"status": "ok", "message": "Portfolio reset a 100$"}
 
 
+@router.post("/positions/{position_id}/close")
+async def close_position_manual(position_id: int):
+    """Ferme manuellement une position au prix actuel."""
+    from app.database import get_active_positions, close_position, insert_trade, update_paper_balance
+    from app.core.paper_trader import paper_trader
+    from app.core.position_monitor import position_monitor
+    from datetime import datetime
+
+    # Trouver la position
+    positions = await get_active_positions()
+    pos = next((p for p in positions if p["id"] == position_id), None)
+    if not pos:
+        return {"success": False, "error": "Position introuvable ou deja fermee"}
+
+    # Recuperer le prix actuel
+    try:
+        ticker = await market_data.fetch_ticker(pos["symbol"])
+        current_price = ticker.get("price", 0)
+    except Exception:
+        current_price = 0
+
+    if current_price <= 0:
+        return {"success": False, "error": "Impossible de recuperer le prix actuel"}
+
+    # Calculer le P&L
+    entry = pos["entry_price"]
+    direction = pos["direction"]
+    original_qty = pos["original_quantity"]
+    remaining_qty = pos["remaining_quantity"]
+
+    realized_pnl = 0.0
+    if pos.get("tp1_hit"):
+        tp1_qty = original_qty * (pos.get("tp1_close_pct", 40) / 100)
+        diff = (pos["tp1"] - entry) if direction == "long" else (entry - pos["tp1"])
+        realized_pnl += diff * tp1_qty
+    if pos.get("tp2_hit"):
+        tp2_qty = original_qty * (pos.get("tp2_close_pct", 30) / 100)
+        diff = (pos["tp2"] - entry) if direction == "long" else (entry - pos["tp2"])
+        realized_pnl += diff * tp2_qty
+
+    diff = (current_price - entry) if direction == "long" else (entry - current_price)
+    unrealized_pnl = diff * remaining_qty
+    total_pnl = realized_pnl + unrealized_pnl
+
+    # Fermer la position dans la DB
+    now = datetime.utcnow().isoformat()
+    pnl_pct = (total_pnl / pos.get("margin_required", 1)) * 100 if pos.get("margin_required") else 0
+    result = "win" if total_pnl > 0 else "loss"
+
+    await close_position(position_id, {
+        "closed_at": now,
+        "close_reason": "manual",
+        "pnl_usd": round(total_pnl, 4),
+    })
+
+    # Journaliser le trade
+    entry_time = pos.get("entry_time") or pos.get("created_at")
+    duration = 0
+    if entry_time:
+        try:
+            duration = int((datetime.fromisoformat(now) - datetime.fromisoformat(entry_time)).total_seconds())
+        except Exception:
+            pass
+
+    await insert_trade({
+        "signal_id": pos.get("signal_id"),
+        "symbol": pos["symbol"],
+        "mode": pos.get("mode", "unknown"),
+        "direction": pos["direction"],
+        "entry_price": entry,
+        "exit_price": current_price,
+        "stop_loss": pos["stop_loss"],
+        "tp1": pos["tp1"],
+        "tp2": pos["tp2"],
+        "tp3": pos["tp3"],
+        "leverage": pos.get("leverage"),
+        "position_size_usd": pos.get("position_size_usd"),
+        "pnl_usd": round(total_pnl, 4),
+        "pnl_pct": round(pnl_pct, 2),
+        "result": result,
+        "entry_time": entry_time,
+        "exit_time": now,
+        "duration_seconds": duration,
+        "notes": f"manual_close tp1={pos.get('tp1_hit',0)} tp2={pos.get('tp2_hit',0)}",
+    })
+
+    # Mettre a jour le paper portfolio
+    margin = paper_trader._open_positions.pop(position_id, pos.get("margin_required", 0))
+    if margin:
+        await update_paper_balance(total_pnl, total_pnl > 0, margin)
+
+    # Retirer du cache du position_monitor
+    position_monitor._positions.pop(position_id, None)
+
+    return {
+        "success": True,
+        "pnl_usd": round(total_pnl, 4),
+        "pnl_pct": round(pnl_pct, 2),
+        "exit_price": current_price,
+        "result": result,
+    }
+
+
 @router.post("/test-signal")
 async def send_test_signal():
     """Envoie un faux signal sur Telegram pour tester le flow (rien n'est execute)."""
