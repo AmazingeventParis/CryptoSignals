@@ -34,6 +34,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     fetchTickers();
     setInterval(refreshAll, 15000);
+    // Countdown timer pour expirer les signaux
+    setInterval(updateCountdowns, 1000);
 });
 
 async function refreshAll() {
@@ -135,9 +137,14 @@ function renderSignals(signals) {
             reasons = arr.map(r => `<div style="font-size:11px;color:var(--text-secondary)">• ${r}</div>`).join('');
         } catch {}
 
-        // Boutons d'execution (seulement si pas deja execute)
+        // Boutons d'execution (seulement si pas deja execute et < 20s)
         const status = (s.status || '').toLowerCase();
-        const canExec = !['executed', 'skipped', 'error'].includes(status) && s.direction !== 'none';
+        const signalTime = new Date(s.timestamp || s.created_at).getTime();
+        const ageSeconds = Math.floor((Date.now() - signalTime) / 1000);
+        const EXPIRE_SEC = 20;
+        const isExpired = ageSeconds > EXPIRE_SEC;
+        const canExec = !['executed', 'skipped', 'error', 'expired'].includes(status) && s.direction !== 'none' && !isExpired;
+        const remaining = Math.max(0, EXPIRE_SEC - ageSeconds);
         let actionsHtml = '';
         if (canExec && s.id) {
             const sid = s.id;
@@ -147,7 +154,10 @@ function renderSignals(signals) {
                 <button class="btn-amount" onclick="openExecModal(${sid},'market',10)">10$</button>
                 <button class="btn-amount" onclick="openExecModal(${sid},'market',25)">25$</button>
                 <button class="btn-custom" onclick="openExecModal(${sid},'market',0)">...$</button>
+                <span class="signal-countdown" id="countdown-${sid}">${remaining}s</span>
             </div>`;
+        } else if (isExpired && !['executed', 'skipped', 'error'].includes(status)) {
+            actionsHtml = '<div class="signal-actions"><span class="signal-status status-expired">Expire</span></div>';
         } else if (status === 'executed') {
             actionsHtml = '<div class="signal-actions"><span class="signal-status status-executed">&#x2705; Execute</span></div>';
         } else if (status === 'skipped') {
@@ -158,9 +168,10 @@ function renderSignals(signals) {
 
         const isTest = status === 'test';
         const testBadge = isTest ? '<span class="signal-test">SIMULATION</span>' : '';
+        const expiredClass = (isExpired && !['executed'].includes(status)) ? 'signal-card-expired' : '';
 
         return `
-        <div class="signal-card ${isTest ? 'signal-card-test' : ''}" id="signal-card-${s.id || 0}" data-status="${status}">
+        <div class="signal-card ${isTest ? 'signal-card-test' : ''} ${expiredClass}" id="signal-card-${s.id || 0}" data-status="${status}">
             <div class="signal-header">
                 <div style="display:flex;align-items:center;gap:8px">
                     <span class="signal-pair">${s.symbol}</span>
@@ -765,6 +776,20 @@ async function confirmExec() {
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeModal();
 });
+
+// --- Signal countdown (expire apres 20s) ---
+function updateCountdowns() {
+    document.querySelectorAll('.signal-countdown').forEach(el => {
+        const sec = parseInt(el.textContent) - 1;
+        if (sec <= 0) {
+            // Re-render les signaux pour afficher "Expire"
+            fetchSignals();
+        } else {
+            el.textContent = sec + 's';
+            if (sec <= 5) el.style.color = 'var(--red)';
+        }
+    });
+}
 
 // --- Positions live (WebSocket MEXC direct) ---
 let positionsData = [];   // positions depuis l'API
