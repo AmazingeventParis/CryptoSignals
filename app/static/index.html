@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=35">
+    <link rel="stylesheet" href="/static/style.css?v=36">
 </head>
 <body>
     <div id="app">
@@ -59,9 +59,6 @@
 
         <!-- MAIN CONTENT (droite sur desktop) -->
         <main class="main-content">
-            <!-- Positions actives (live) - en haut du contenu principal -->
-            <div id="positions-live" class="positions-live"></div>
-
             <!-- Tabs -->
             <div class="tabs">
                 <button class="tab active" onclick="switchTab('signals')">Signaux</button>
@@ -69,6 +66,9 @@
                 <button class="tab" onclick="switchTab('trades')">Journal</button>
                 <button class="tab" onclick="switchTab('pairs')">Paires</button>
             </div>
+
+            <!-- Positions actives (live) - au-dessus des tabs content -->
+            <div id="positions-live" class="positions-live"></div>
 
             <!-- Signals Tab -->
             <div id="tab-signals" class="tab-content active">
@@ -175,6 +175,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=35"></script>
+    <script src="/static/app.js?v=36"></script>
 </body>
 </html>

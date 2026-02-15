@@ -1011,7 +1011,7 @@ function renderLivePositions(positions) {
                     <span class="pos-level pos-level-tp ${p.tp1_hit ? 'hit' : ''}">TP1 ${p.tp1.toFixed(dec)}</span>
                     <span class="pos-level pos-level-tp ${p.tp2_hit ? 'hit' : ''}">TP2 ${p.tp2.toFixed(dec)}</span>
                     <span class="pos-level pos-level-tp ${p.tp3_hit ? 'hit' : ''}">TP3 ${p.tp3.toFixed(dec)}</span>
-                    <button class="pos-chart-btn" onclick="openChartModal('${p.symbol}')">CHART</button>
+                    <button class="pos-chart-btn" onclick="openChartModal('${p.symbol}', ${p.entry_price}, '${p.direction}')">CHART</button>
                     <button class="pos-close-btn" onclick="closePosition(${p.id}, this)">FERMER</button>
                 </div>
             </div>`;
@@ -1063,12 +1063,17 @@ let popupTimeframe = '5m';
 let popupShowVol = true;
 let popupShowFVG = true;
 let popupWs = null;
+let popupEntryPrice = null;
+let popupDirection = null;
+let popupEntryLine = null;
 
-function openChartModal(symbol) {
+function openChartModal(symbol, entryPrice, direction) {
     popupPair = symbol;
     popupTimeframe = '5m';
     popupShowVol = true;
     popupShowFVG = true;
+    popupEntryPrice = entryPrice || null;
+    popupDirection = direction || null;
 
     document.getElementById('chart-modal-title').textContent = symbol.split(':')[0];
     document.getElementById('chart-modal').style.display = 'flex';
@@ -1180,6 +1185,24 @@ async function loadPopupChart() {
         })));
 
         popupLastCandles = adjusted;
+
+        // Ligne horizontale au prix d'entree
+        if (popupEntryLine) {
+            popupCandleSeries.removePriceLine(popupEntryLine);
+            popupEntryLine = null;
+        }
+        if (popupEntryPrice) {
+            const lineColor = popupDirection === 'short' ? '#f85149' : '#3fb950';
+            popupEntryLine = popupCandleSeries.createPriceLine({
+                price: popupEntryPrice,
+                color: '#58a6ff',
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: `Entree ${popupDirection === 'short' ? 'SHORT' : 'LONG'} ${popupEntryPrice}`,
+            });
+        }
+
         popupChart.timeScale().fitContent();
         setTimeout(() => drawPopupFVG(), 50);
         connectPopupWs();
