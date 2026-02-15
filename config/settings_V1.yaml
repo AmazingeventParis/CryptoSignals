@@ -1,6 +1,5 @@
 # ============================================
-# CRYPTO SIGNALS - Configuration V2
-# Changements vs V1 : levier scalp reduit, TP1 plus gros, TP3 rapproche
+# CRYPTO SIGNALS - Configuration
 # ============================================
 
 # --- Paires surveillees ---
@@ -45,16 +44,16 @@ scalping:
 
   stop_loss:
     method: "atr"
-    atr_multiplier: 1.8        # V2: plus de marge pour eviter SL par bruit (etait 1.5)
-    max_stop_pct: 0.7           # V2: elargi (etait 0.5)
+    atr_multiplier: 1.5
+    max_stop_pct: 0.5
 
   take_profit:
-    tp1_rr: 1.0               # Risk:Reward 1:1 -> ferme 50%
-    tp1_close_pct: 50           # V2: securise plus au TP1 (etait 40%)
+    tp1_rr: 1.0               # Risk:Reward 1:1 -> ferme 40%
+    tp1_close_pct: 40
     tp2_rr: 1.5               # R:R 1.5:1 -> ferme 30%
     tp2_close_pct: 30
-    tp3_rr: 2.0               # V2: rapproche (etait 2.5) -> se touche plus souvent
-    tp3_close_pct: 20           # V2: reduit (etait 30%)
+    tp3_rr: 2.5               # R:R 2.5:1 -> ferme 30%
+    tp3_close_pct: 30
 
   break_even:
     trigger: "tp1"
@@ -71,7 +70,7 @@ scalping:
 
   risk:
     max_risk_per_trade_pct: 1.0
-    leverage_range: [10, 12]     # V2: reduit (etait 10-20) -> SL moins serre
+    leverage_range: [10, 20]
     margin_mode: "isolated"
 
 # --- Mode Swing Court (15-30 min) ---
@@ -99,11 +98,11 @@ swing:
 
   take_profit:
     tp1_rr: 1.5
-    tp1_close_pct: 45           # V2: securise plus au TP1 (etait 33%)
-    tp2_rr: 2.0                 # V2: rapproche (etait 2.5)
-    tp2_close_pct: 30           # V2: ajuste (etait 33%)
-    tp3_rr: 3.0                 # V2: rapproche (etait 4.0) -> se touche plus souvent
-    tp3_close_pct: 25           # V2: ajuste (etait 34%)
+    tp1_close_pct: 33
+    tp2_rr: 2.5
+    tp2_close_pct: 33
+    tp3_rr: 4.0
+    tp3_close_pct: 34
 
   break_even:
     trigger: "tp1"
