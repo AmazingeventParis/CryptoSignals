@@ -55,6 +55,77 @@ def bollinger_bands(series: pd.Series, period: int = 20, std: float = 2.0) -> di
     }
 
 
+def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> dict:
+    ema_fast = ema(series, fast)
+    ema_slow_val = ema(series, slow)
+    macd_line = ema_fast - ema_slow_val
+    signal_line = ema(macd_line, signal)
+    histogram = macd_line - signal_line
+    return {"macd": macd_line, "signal": signal_line, "histogram": histogram}
+
+
+def stoch_rsi(series: pd.Series, period: int = 14, k: int = 3, d: int = 3) -> dict:
+    rsi_values = rsi(series, period)
+    rsi_min = rsi_values.rolling(window=period).min()
+    rsi_max = rsi_values.rolling(window=period).max()
+    stoch_k = ((rsi_values - rsi_min) / (rsi_max - rsi_min).replace(0, np.nan)) * 100
+    stoch_k = stoch_k.rolling(window=k).mean()
+    stoch_d = stoch_k.rolling(window=d).mean()
+    return {"k": stoch_k, "d": stoch_d}
+
+
+def adx(df: pd.DataFrame, period: int = 14) -> dict:
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+
+    plus_dm = high.diff()
+    minus_dm = -low.diff()
+    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr_val = tr.rolling(window=period).mean()
+    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr_val.replace(0, np.nan))
+    minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr_val.replace(0, np.nan))
+
+    dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
+    adx_val = dx.rolling(window=period).mean()
+
+    return {"adx": adx_val, "plus_di": plus_di, "minus_di": minus_di}
+
+
+def obv(df: pd.DataFrame) -> pd.Series:
+    close = df["close"]
+    volume = df["volume"]
+    direction = np.where(close > close.shift(1), 1, np.where(close < close.shift(1), -1, 0))
+    obv_values = (volume * direction).cumsum()
+    return pd.Series(obv_values, index=df.index)
+
+
+def ichimoku(df: pd.DataFrame) -> dict:
+    high = df["high"]
+    low = df["low"]
+
+    tenkan = (high.rolling(9).max() + low.rolling(9).min()) / 2
+    kijun = (high.rolling(26).max() + low.rolling(26).min()) / 2
+    senkou_a = ((tenkan + kijun) / 2).shift(26)
+    senkou_b = ((high.rolling(52).max() + low.rolling(52).min()) / 2).shift(26)
+    chikou = df["close"].shift(-26)
+
+    return {
+        "tenkan": tenkan,
+        "kijun": kijun,
+        "senkou_a": senkou_a,
+        "senkou_b": senkou_b,
+        "chikou": chikou,
+    }
+
+
 def vwap(df: pd.DataFrame) -> pd.Series:
     typical_price = (df["high"] + df["low"] + df["close"]) / 3
     cum_volume = df["volume"].cumsum()
@@ -187,8 +258,10 @@ def compute_all_indicators(df: pd.DataFrame, config: dict) -> dict:
 
     close = df["close"]
 
+    # --- Indicateurs de base ---
     ema_fast = ema(close, config.get("ema_fast", 20))
-    ema_slow = ema(close, config.get("ema_slow", 50))
+    ema_slow_val = ema(close, config.get("ema_slow", 50))
+    ema_200_val = ema(close, 200)
     rsi_values = rsi(close, config.get("rsi_period", 14))
     atr_values = atr(df, 14)
     bb = bollinger_bands(close, 20, 2)
@@ -198,9 +271,22 @@ def compute_all_indicators(df: pd.DataFrame, config: dict) -> dict:
     engulfing = detect_engulfing(df)
     pin_bar = detect_pin_bar(df)
 
+    # --- Indicateurs avances ---
+    macd_data = macd(close)
+    stoch_rsi_data = stoch_rsi(close)
+    adx_data = adx(df)
+    obv_values = obv(df)
+    ichimoku_data = ichimoku(df)
+    vwap_values = vwap(df)
+
+    # Divergence MACD (en plus de la divergence RSI)
+    macd_divergence = detect_divergence(close, macd_data["macd"])
+
     return {
+        # Series de base
         "ema_fast": ema_fast,
-        "ema_slow": ema_slow,
+        "ema_slow": ema_slow_val,
+        "ema_200": ema_200_val,
         "rsi": rsi_values,
         "atr": atr_values,
         "bb": bb,
@@ -210,13 +296,33 @@ def compute_all_indicators(df: pd.DataFrame, config: dict) -> dict:
         "divergence": divergence,
         "engulfing": engulfing,
         "pin_bar": pin_bar,
+        # Series avancees
+        "macd": macd_data,
+        "stoch_rsi": stoch_rsi_data,
+        "adx": adx_data,
+        "obv": obv_values,
+        "ichimoku": ichimoku_data,
+        "vwap": vwap_values,
+        "macd_divergence": macd_divergence,
+        # Dernieres valeurs
         "last_close": close.iloc[-1],
         "last_ema_fast": ema_fast.iloc[-1],
-        "last_ema_slow": ema_slow.iloc[-1],
+        "last_ema_slow": ema_slow_val.iloc[-1],
+        "last_ema_200": ema_200_val.iloc[-1],
         "last_rsi": rsi_values.iloc[-1],
         "last_atr": atr_values.iloc[-1],
         "last_bb_upper": bb["upper"].iloc[-1],
         "last_bb_lower": bb["lower"].iloc[-1],
         "last_bb_bandwidth": bb["bandwidth"].iloc[-1],
         "last_volume_ratio": vol_ratio.iloc[-1] if not vol_ratio.empty else 0,
+        "last_macd": macd_data["macd"].iloc[-1],
+        "last_macd_signal": macd_data["signal"].iloc[-1],
+        "last_macd_histogram": macd_data["histogram"].iloc[-1],
+        "last_stoch_k": stoch_rsi_data["k"].iloc[-1],
+        "last_stoch_d": stoch_rsi_data["d"].iloc[-1],
+        "last_adx": adx_data["adx"].iloc[-1],
+        "last_plus_di": adx_data["plus_di"].iloc[-1],
+        "last_minus_di": adx_data["minus_di"].iloc[-1],
+        "last_obv": obv_values.iloc[-1],
+        "last_vwap": vwap_values.iloc[-1],
     }

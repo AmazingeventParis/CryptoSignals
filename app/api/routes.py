@@ -131,6 +131,14 @@ async def debug_pair(symbol: str, mode: str = Query("scalping")):
     return result
 
 
+@router.get("/sentiment")
+async def get_sentiment():
+    """Retourne le sentiment actuel du marche."""
+    from app.services.sentiment import sentiment_analyzer
+    sentiment = await sentiment_analyzer.get_sentiment()
+    return sentiment
+
+
 @router.get("/positions")
 async def list_positions():
     positions = await get_active_positions()

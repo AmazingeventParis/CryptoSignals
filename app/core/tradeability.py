@@ -107,6 +107,20 @@ def check_oi_stability(oi_change_pct: float) -> tuple[float, str]:
         return max(0.0, score), f"OI variation {oi_change_pct:+.1f}%"
 
 
+def check_adx_trend(adx_val: float) -> tuple[float, str]:
+    """ADX > 25 = tendance forte (bon pour trader), < 20 = range (prudence)."""
+    if adx_val is None or (isinstance(adx_val, float) and (adx_val != adx_val)):  # NaN check
+        return 0.5, "ADX indisponible"
+    if adx_val >= 30:
+        return 1.0, f"ADX {adx_val:.1f} tendance forte"
+    elif adx_val >= 25:
+        return 0.8, f"ADX {adx_val:.1f} tendance moderee"
+    elif adx_val >= 20:
+        return 0.5, f"ADX {adx_val:.1f} tendance faible"
+    else:
+        return 0.2, f"ADX {adx_val:.1f} range (pas de tendance)"
+
+
 def evaluate_tradeability(
     atr_current: float,
     atr_mean: float,
@@ -118,6 +132,7 @@ def evaluate_tradeability(
     funding_rate: float,
     oi_change_pct: float,
     mode: str = "scalping",
+    adx_val: float = None,
 ) -> dict:
     checks = {}
 
@@ -127,6 +142,7 @@ def evaluate_tradeability(
     checks["depth"] = check_depth(bid_depth, ask_depth)
     checks["funding"] = check_funding(funding_rate)
     checks["oi_stability"] = check_oi_stability(oi_change_pct)
+    checks["adx_trend"] = check_adx_trend(adx_val)
 
     # Kill switches : si un check retourne -1, NON-TRADABLE immediat
     for name, (score, reason) in checks.items():

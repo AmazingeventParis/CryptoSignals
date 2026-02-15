@@ -1,5 +1,5 @@
 """
-Signal Engine : combine les 3 couches (Tradeability + Direction + Entry)
+Signal Engine : combine les 4 couches (Tradeability + Direction + Entry + Sentiment)
 pour produire un signal final avec scoring 0-100.
 """
 import logging
@@ -9,6 +9,7 @@ from app.core.tradeability import evaluate_tradeability
 from app.core.direction import evaluate_direction
 from app.core.entry import find_best_entry, calculate_rr_score
 from app.core.risk_manager import calculate_risk
+from app.services.sentiment import sentiment_analyzer
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ SCORING = SETTINGS["scoring"]
 async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     """
     Analyse complete d'une paire pour un mode donne.
-    Retourne un signal ou un NO-TRADE.
+    4 couches : Tradeability + Direction + Entry + Sentiment.
     """
     mode_cfg = get_mode_config(mode)
     if not mode_cfg:
@@ -52,6 +53,8 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     vol_current = df_analysis["volume"].tail(5).mean() if len(df_analysis) >= 5 else 0
     vol_mean = df_analysis["volume"].tail(50).mean() if len(df_analysis) >= 50 else 0
 
+    adx_val = indicators_analysis.get("last_adx")
+
     tradeability = evaluate_tradeability(
         atr_current=atr_current,
         atr_mean=atr_mean,
@@ -61,8 +64,9 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
         bid_depth=orderbook.get("bid_depth", 0),
         ask_depth=orderbook.get("ask_depth", 0),
         funding_rate=market_data_dict.get("funding_rate", 0),
-        oi_change_pct=0,  # A calculer avec historique OI
+        oi_change_pct=0,
         mode=mode,
+        adx_val=adx_val,
     )
 
     if not tradeability["is_tradable"]:
@@ -88,7 +92,6 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     direction = evaluate_direction(indicators_filter)
     direction_bias = direction["bias"]
 
-    # En swing, si direction neutre = no trade
     if mode == "swing" and direction_bias == "neutral":
         return _no_trade(
             symbol, mode, "Direction neutre sur TF superieur (swing = no trade)",
@@ -108,6 +111,25 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
         )
 
     # =========================================
+    # COUCHE D : SENTIMENT
+    # =========================================
+    sentiment = await sentiment_analyzer.get_sentiment()
+    sentiment_score = sentiment["score"]  # -100 a +100
+
+    # Le sentiment oriente la direction : boost ou penalise
+    direction_score = direction["score"]
+    sentiment_bias = sentiment["bias"]
+
+    if sentiment_bias == "bearish" and entry["direction"] == "long":
+        direction_score = int(direction_score * 0.6)
+    elif sentiment_bias == "bearish" and entry["direction"] == "short":
+        direction_score = int(min(100, direction_score * 1.3))
+    elif sentiment_bias == "bullish" and entry["direction"] == "long":
+        direction_score = int(min(100, direction_score * 1.3))
+    elif sentiment_bias == "bullish" and entry["direction"] == "short":
+        direction_score = int(direction_score * 0.6)
+
+    # =========================================
     # RISK MANAGEMENT
     # =========================================
     risk = calculate_risk(
@@ -120,7 +142,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     )
 
     # =========================================
-    # SCORING FINAL
+    # SCORING FINAL (4 couches)
     # =========================================
     rr_score = calculate_rr_score(
         entry["entry_price"], risk["stop_loss"], risk["tp1"]
@@ -128,10 +150,19 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     setup_score = entry["pattern_score"] + entry["vol_score"] + rr_score + entry.get("confluence_score", 0)
     setup_score = min(100, setup_score)
 
+    # Normaliser le sentiment de [-100, +100] vers [0, 100]
+    # Positif pour la direction du trade, negatif contre
+    if entry["direction"] == "long":
+        sentiment_normalized = (sentiment_score + 100) / 2  # 0 a 100
+    else:
+        sentiment_normalized = (-sentiment_score + 100) / 2  # Inverse pour short
+
+    weights = SCORING["weights"]
     final_score = int(
-        tradeability["score"] * 100 * SCORING["weights"]["tradeability"]
-        + direction["score"] * SCORING["weights"]["direction"]
-        + setup_score * SCORING["weights"]["setup"]
+        tradeability["score"] * 100 * weights.get("tradeability", 0.30)
+        + direction_score * weights.get("direction", 0.25)
+        + setup_score * weights.get("setup", 0.25)
+        + sentiment_normalized * weights.get("sentiment", 0.20)
     )
     final_score = max(0, min(100, final_score))
 
@@ -151,7 +182,8 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
         reasons.append(s)
     reasons.append(entry["reason"])
     reasons.append(f"Funding rate {market_data_dict.get('funding_rate', 0):+.4f}%")
-    reasons.append(f"Spread {orderbook.get('spread_pct', 0):.4f}%")
+    if sentiment["reasons"]:
+        reasons.append(f"Sentiment: {', '.join(sentiment['reasons'][:2])}")
 
     return {
         "type": "signal",
@@ -168,11 +200,19 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
         "leverage": risk["leverage"],
         "risk_pct": risk["risk_pct"],
         "rr_ratio": risk["rr_ratio"],
+        "tp1_close_pct": mode_cfg["take_profit"]["tp1_close_pct"],
+        "tp2_close_pct": mode_cfg["take_profit"]["tp2_close_pct"],
+        "tp3_close_pct": mode_cfg["take_profit"]["tp3_close_pct"],
         "reasons": reasons,
         "tradeability_score": tradeability["score"],
-        "direction_score": direction["score"],
+        "direction_score": direction_score,
         "direction_bias": direction_bias,
         "setup_score": setup_score,
+        "sentiment": {
+            "score": sentiment_score,
+            "bias": sentiment_bias,
+            "fear_greed": sentiment.get("fear_greed", 50),
+        },
         "all_setups": entry.get("all_setups", []),
     }
 

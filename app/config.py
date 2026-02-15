@@ -26,6 +26,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 APP_MODE = os.getenv("APP_MODE", "paper")  # paper | live
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+# API keys sentiment (optionnels)
+CRYPTOPANIC_TOKEN = os.getenv("CRYPTOPANIC_TOKEN", "")
+FINNHUB_TOKEN = os.getenv("FINNHUB_TOKEN", "")
+
 DB_PATH = DATA_DIR / "signals.db"
 
 

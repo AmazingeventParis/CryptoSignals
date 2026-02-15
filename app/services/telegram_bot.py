@@ -51,6 +51,15 @@ async def send_signal(signal: dict):
     lev = signal.get("leverage", 10)
     signal_id = signal.get("id", 0)
 
+    # Sentiment line
+    sentiment_line = ""
+    sentiment = signal.get("sentiment")
+    if sentiment:
+        s_bias = sentiment.get("bias", "neutral")
+        s_emoji = "\U0001f7e2" if s_bias == "bullish" else ("\U0001f534" if s_bias == "bearish" else "\u26aa")
+        fng = sentiment.get("fear_greed", "?")
+        sentiment_line = f"\n\U0001f4ca Sentiment: {s_emoji} {s_bias.capitalize()} (F&G: {fng})"
+
     text = (
         f"{emoji} <b>{direction} {signal['symbol']}</b> [{mode_label}] "
         f"Score {signal['score']}\n"
@@ -61,6 +70,7 @@ async def send_signal(signal: dict):
         f"<code>{signal['tp3']:.{dec}f}</code>\n"
         f"\U0001f527 {lev}x | {signal.get('setup_type', '')} "
         f"| R:R 1:{signal.get('rr_ratio', 0)}"
+        f"{sentiment_line}"
     )
 
     reply_markup = {

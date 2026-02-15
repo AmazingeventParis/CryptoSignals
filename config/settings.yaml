@@ -123,12 +123,13 @@ swing:
 tradeability:
   min_score: 0.6               # Score minimum pour etre tradable
   weights:
-    volatility: 0.20
-    volume: 0.20
-    spread: 0.20
-    depth: 0.15
-    funding: 0.15
+    volatility: 0.18
+    volume: 0.18
+    spread: 0.18
+    depth: 0.13
+    funding: 0.13
     oi_stability: 0.10
+    adx_trend: 0.10
   thresholds:
     # Volatilite
     atr_min_ratio: 0.5         # ATR actuel > 0.5x moyenne
@@ -176,9 +177,10 @@ entry:
 # --- Scoring ---
 scoring:
   weights:
-    tradeability: 0.25
+    tradeability: 0.30
     direction: 0.25
-    setup: 0.50
+    setup: 0.25
+    sentiment: 0.20
   setup_components:
     pattern_quality: 30
     volume_confirmation: 20
