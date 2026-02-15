@@ -1069,6 +1069,42 @@ let popupEntryPrice = null;
 let popupDirection = null;
 let popupEntryLine = null;
 
+// --- Drag modal chart ---
+function initDragModal() {
+    const modal = document.querySelector('#chart-modal .chart-modal-lg');
+    const header = modal.querySelector('.modal-header');
+    let isDragging = false, startX, startY, origX, origY;
+
+    header.style.cursor = 'grab';
+    modal.style.position = 'relative';
+
+    header.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.btn-icon')) return;
+        isDragging = true;
+        header.style.cursor = 'grabbing';
+        startX = e.clientX;
+        startY = e.clientY;
+        const style = window.getComputedStyle(modal);
+        origX = parseInt(style.left) || 0;
+        origY = parseInt(style.top) || 0;
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        modal.style.left = (origX + e.clientX - startX) + 'px';
+        modal.style.top = (origY + e.clientY - startY) + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            header.style.cursor = 'grab';
+        }
+    });
+}
+document.addEventListener('DOMContentLoaded', initDragModal);
+
 function openChartModal(symbol, entryPrice, direction) {
     popupPair = symbol;
     popupTimeframe = '5m';
@@ -1079,6 +1115,11 @@ function openChartModal(symbol, entryPrice, direction) {
 
     document.getElementById('chart-modal-title').textContent = symbol.split(':')[0];
     document.getElementById('chart-modal').style.display = 'flex';
+
+    // Reset position du modal (au centre)
+    const modal = document.querySelector('#chart-modal .chart-modal-lg');
+    modal.style.left = '0px';
+    modal.style.top = '0px';
 
     // Reset TF buttons
     document.querySelectorAll('.popup-tf-btn').forEach(b => b.classList.remove('active'));
