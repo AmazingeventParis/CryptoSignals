@@ -9,6 +9,7 @@ from app.core.market_data import market_data
 from app.core.signal_engine import analyze_pair
 from app.database import insert_signal, log_tradeability
 from app.services.telegram_bot import send_signal, send_no_trade_summary
+from app.core.paper_trader import paper_trader
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,12 @@ class Scanner:
                             f"SIGNAL {result['direction'].upper()} {symbol} [{mode}] "
                             f"score={result['score']} entry={result['entry_price']}"
                         )
+
+                        # Auto-execute en paper trading
+                        try:
+                            await paper_trader.auto_execute(result)
+                        except Exception as pe:
+                            logger.error(f"Paper trade erreur: {pe}")
 
                     else:
                         # Log tradeability

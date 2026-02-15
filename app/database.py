@@ -71,6 +71,20 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS paper_portfolio (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    initial_balance REAL DEFAULT 100.0,
+    current_balance REAL DEFAULT 100.0,
+    reserved_margin REAL DEFAULT 0.0,
+    total_trades INTEGER DEFAULT 0,
+    wins INTEGER DEFAULT 0,
+    losses INTEGER DEFAULT 0,
+    total_pnl REAL DEFAULT 0.0,
+    best_trade_pnl REAL DEFAULT 0.0,
+    worst_trade_pnl REAL DEFAULT 0.0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS active_positions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     signal_id INTEGER REFERENCES signals(id),
@@ -325,3 +339,82 @@ async def update_position(position_id: int, updates: dict):
 async def close_position(position_id: int, updates: dict):
     updates["state"] = "closed"
     await update_position(position_id, updates)
+
+
+# --- Paper Portfolio ---
+
+async def init_paper_portfolio(initial_balance: float = 100.0):
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        cursor = await db.execute("SELECT COUNT(*) as c FROM paper_portfolio")
+        row = await cursor.fetchone()
+        if row[0] == 0:
+            await db.execute(
+                "INSERT INTO paper_portfolio (initial_balance, current_balance) VALUES (?, ?)",
+                (initial_balance, initial_balance),
+            )
+            await db.commit()
+
+
+async def get_paper_portfolio() -> dict:
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM paper_portfolio ORDER BY id LIMIT 1")
+        row = await cursor.fetchone()
+        if not row:
+            return {
+                "initial_balance": 100.0, "current_balance": 100.0,
+                "reserved_margin": 0.0, "total_trades": 0,
+                "wins": 0, "losses": 0, "total_pnl": 0.0,
+                "best_trade_pnl": 0.0, "worst_trade_pnl": 0.0,
+            }
+        return dict(row)
+
+
+async def reserve_paper_margin(amount: float):
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            "UPDATE paper_portfolio SET reserved_margin = reserved_margin + ? WHERE id = 1",
+            (amount,),
+        )
+        await db.commit()
+
+
+async def release_paper_margin(amount: float):
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            "UPDATE paper_portfolio SET reserved_margin = MAX(0, reserved_margin - ?) WHERE id = 1",
+            (amount,),
+        )
+        await db.commit()
+
+
+async def update_paper_balance(pnl: float, is_win: bool, margin: float):
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        # Liberer la marge et ajouter le P&L
+        await db.execute(
+            """UPDATE paper_portfolio SET
+                current_balance = current_balance + ?,
+                reserved_margin = MAX(0, reserved_margin - ?),
+                total_trades = total_trades + 1,
+                wins = wins + ?,
+                losses = losses + ?,
+                total_pnl = total_pnl + ?,
+                best_trade_pnl = MAX(best_trade_pnl, ?),
+                worst_trade_pnl = MIN(worst_trade_pnl, ?)
+            WHERE id = 1""",
+            (pnl, margin, 1 if is_win else 0, 0 if is_win else 1, pnl, pnl, pnl),
+        )
+        await db.commit()
+
+
+async def reset_paper_portfolio(initial_balance: float = 100.0):
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute("DELETE FROM paper_portfolio")
+        await db.execute("DELETE FROM active_positions")
+        await db.execute("DELETE FROM trades_journal")
+        await db.execute("DELETE FROM signals")
+        await db.execute(
+            "INSERT INTO paper_portfolio (initial_balance, current_balance) VALUES (?, ?)",
+            (initial_balance, initial_balance),
+        )
+        await db.commit()

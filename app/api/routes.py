@@ -197,6 +197,24 @@ async def list_positions():
     return {"positions": positions, "count": len(positions)}
 
 
+@router.get("/paper/portfolio")
+async def paper_portfolio():
+    """Retourne le portefeuille paper trading."""
+    from app.database import get_paper_portfolio
+    portfolio = await get_paper_portfolio()
+    return portfolio
+
+
+@router.post("/paper/reset")
+async def paper_reset():
+    """Remet le portefeuille paper a zero (100$)."""
+    from app.database import reset_paper_portfolio
+    from app.core.paper_trader import paper_trader
+    await reset_paper_portfolio(100.0)
+    paper_trader._open_positions.clear()
+    return {"status": "ok", "message": "Portfolio reset a 100$"}
+
+
 @router.post("/test-signal")
 async def send_test_signal():
     """Envoie un faux signal sur Telegram pour tester le flow (rien n'est execute)."""

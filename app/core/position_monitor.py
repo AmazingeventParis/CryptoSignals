@@ -34,6 +34,11 @@ class PositionMonitor:
         self._positions: dict[int, dict] = {}  # pos_id -> pos data (cache)
         self._ws_tasks: dict[str, asyncio.Task] = {}  # symbol -> ws task
         self._processing: set = set()  # pos_ids en cours de traitement (anti-doublon)
+        self._on_close_callbacks: list = []  # callbacks appeles quand une position ferme
+
+    def add_on_close_callback(self, callback):
+        """Ajoute un callback appele a la fermeture d'une position: callback(pos_id, pnl_usd)."""
+        self._on_close_callbacks.append(callback)
 
     async def start(self):
         self.running = True
@@ -458,6 +463,13 @@ class PositionMonitor:
             "notes": f"{close_reason} tp1={pos.get('tp1_hit',0)} tp2={pos.get('tp2_hit',0)} tp3={pos.get('tp3_hit',0)}",
         })
         logger.info(f"Trade journalise: {pos['symbol']} {result} PnL={pnl_usd:.2f}$ ({close_reason})")
+
+        # Appeler les callbacks de fermeture (paper trader etc.)
+        for cb in self._on_close_callbacks:
+            try:
+                await cb(pos["id"], pnl_usd)
+            except Exception as e:
+                logger.error(f"Erreur callback on_close: {e}")
 
     @staticmethod
     def _get_decimals(price: float) -> int:

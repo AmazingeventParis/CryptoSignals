@@ -18,6 +18,7 @@ from app.database import init_db, get_signal_by_id, update_signal_status
 from app.core.market_data import market_data
 from app.core.scanner import scanner
 from app.core.position_monitor import position_monitor
+from app.core.paper_trader import paper_trader
 from app.core.order_executor import execute_signal
 from app.api.routes import router
 from app.services.telegram_bot import (
@@ -56,6 +57,10 @@ async def lifespan(app: FastAPI):
         await register_webhook("https://crypto.swipego.app/telegram/webhook")
     except Exception as e:
         logger.warning(f"Telegram webhook registration echoue: {e}")
+
+    # Demarrer le paper trader (portefeuille fictif)
+    await paper_trader.start()
+    logger.info("Paper Trader demarre (portefeuille fictif)")
 
     # Lancer le scanner en background
     scanner_task = asyncio.create_task(scanner.start())

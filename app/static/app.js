@@ -68,27 +68,29 @@ async function fetchStatus() {
 
 async function fetchStats() {
     try {
-        const res = await fetch(`${API}/api/stats`);
+        const res = await fetch(`${API}/api/paper/portfolio`);
         const data = await res.json();
-        document.getElementById('stat-trades').textContent = data.total_trades || 0;
-        document.getElementById('stat-winrate').textContent = `${data.win_rate || 0}%`;
-        const pnl = data.total_pnl_usd || 0;
+        const trades = data.total_trades || 0;
+        const wins = data.wins || 0;
+        const winRate = trades > 0 ? Math.round((wins / trades) * 100) : 0;
+        const pnl = data.total_pnl || 0;
+
+        document.getElementById('stat-trades').textContent = trades;
+        document.getElementById('stat-winrate').textContent = `${winRate}%`;
         const pnlEl = document.getElementById('stat-pnl');
-        pnlEl.textContent = `$${pnl.toFixed(2)}`;
+        pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
         pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     } catch {}
 }
 
 async function fetchBalance() {
     try {
-        const res = await fetch(`${API}/api/balance`);
+        const res = await fetch(`${API}/api/paper/portfolio`);
         const data = await res.json();
         const el = document.getElementById('balance-display');
-        if (data.total > 0) {
-            el.textContent = `$${data.total.toFixed(2)}`;
-        } else {
-            el.textContent = 'Paper mode';
-        }
+        const balance = data.current_balance || 0;
+        el.textContent = `$${balance.toFixed(2)}`;
+        el.style.color = balance >= (data.initial_balance || 100) ? 'var(--green)' : 'var(--red)';
     } catch {}
 }
 
@@ -762,5 +764,16 @@ async function confirmExec() {
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeModal();
 });
+
+// --- Paper Trading Reset ---
+async function resetPaper() {
+    if (!confirm('Remettre le portefeuille paper a 100$ ?\nTous les trades et signaux seront effaces.')) return;
+    try {
+        await fetch(`${API}/api/paper/reset`, { method: 'POST' });
+        refreshAll();
+    } catch (e) {
+        console.error('Reset erreur:', e);
+    }
+}
 
 // PWA desactive - pas de Service Worker (evite les problemes de cache)
