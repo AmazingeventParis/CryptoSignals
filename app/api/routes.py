@@ -6,7 +6,8 @@ from fastapi import APIRouter, Query
 from app.database import get_signals, get_trades, get_stats
 from app.core.scanner import scanner
 from app.core.market_data import market_data
-from app.config import get_enabled_pairs, SETTINGS, APP_MODE, reload_settings
+from app.config import get_enabled_pairs, SETTINGS, APP_MODE, reload_settings, get_mode_config
+from app.core.signal_engine import analyze_pair
 
 router = APIRouter(prefix="/api")
 
@@ -114,3 +115,17 @@ async def get_all_tickers():
 async def reload_config():
     reload_settings()
     return {"status": "ok", "message": "Configuration rechargee"}
+
+
+@router.get("/debug/{symbol}")
+async def debug_pair(symbol: str, mode: str = Query("scalping")):
+    """Debug: analyse une paire et retourne le resultat complet."""
+    symbol_fmt = symbol.replace("-", "/")
+    mode_cfg = get_mode_config(mode)
+    if not mode_cfg:
+        return {"error": "Mode inconnu"}
+
+    tfs = mode_cfg["timeframes"]["analysis"] + [mode_cfg["timeframes"]["filter"]]
+    data = await market_data.fetch_all_data(symbol_fmt, tfs)
+    result = await analyze_pair(symbol_fmt, data, mode)
+    return result
