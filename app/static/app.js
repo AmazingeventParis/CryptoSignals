@@ -907,6 +907,8 @@ function updatePositionsUI() {
         const cur = livePrices[p.symbol] || p.entry_price;
         return calcLivePnl(p, cur);
     });
+    // Trier: profits en haut, pertes en bas
+    result.sort((a, b) => (b.total_pnl || 0) - (a.total_pnl || 0));
     renderLivePositions(result);
 }
 
