@@ -1136,7 +1136,6 @@ function initPopupChart() {
     });
 
     // --- Selection Zoom (double-clic → dessiner rectangle → zoom) ---
-    // Overlay div qui capture TOUS les events pendant le zoom mode
     const zoomOverlay = document.createElement('div');
     zoomOverlay.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:100;display:none;cursor:crosshair;';
     container.appendChild(zoomOverlay);
@@ -1151,10 +1150,14 @@ function initPopupChart() {
     zoomOverlay.appendChild(zoomBanner);
 
     let selStart = null;
+    let popupZoomed = false;
 
-    container.addEventListener('dblclick', () => {
+    // Capture phase pour bloquer le dblclick avant que lightweight-charts le recoive
+    container.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
         zoomOverlay.style.display = 'block';
-    });
+    }, true);
 
     zoomOverlay.addEventListener('mousedown', (e) => {
         selStart = { x: e.offsetX, y: e.offsetY };
@@ -1185,12 +1188,21 @@ function initPopupChart() {
             const leftX = Math.min(selStart.x, endX);
             const rightX = Math.max(selStart.x, endX);
             const ts = popupChart.timeScale();
-            const leftTime = ts.coordinateToTime(leftX);
-            const rightTime = ts.coordinateToTime(rightX);
-            if (leftTime && rightTime) {
-                ts.setVisibleRange({ from: leftTime, to: rightTime });
-                setTimeout(() => drawPopupFVG(), 50);
+
+            // Calculer via logical range (plus fiable que coordinateToTime)
+            const logRange = ts.getVisibleLogicalRange();
+            if (logRange) {
+                const chartWidth = container.clientWidth;
+                const totalBars = logRange.to - logRange.from;
+                const fromBar = logRange.from + (leftX / chartWidth) * totalBars;
+                const toBar = logRange.from + (rightX / chartWidth) * totalBars;
+                ts.setVisibleLogicalRange({ from: fromBar, to: toBar });
             }
+
+            // Bloquer l'auto-scroll du WebSocket
+            popupChart.timeScale().applyOptions({ shiftVisibleRangeOnNewBar: false });
+            window._popupZoomed = true;
+            setTimeout(() => drawPopupFVG(), 50);
         }
         // Fermer le mode zoom
         selStart = null;
@@ -1335,7 +1347,10 @@ function drawPopupFVG() {
 
 function popupResetZoom() {
     if (popupChart) {
+        popupChart.timeScale().applyOptions({ shiftVisibleRangeOnNewBar: true });
         popupChart.timeScale().fitContent();
+        // Reset le flag zoomed (variable dans initPopupChart closure)
+        window._popupZoomed = false;
         setTimeout(() => drawPopupFVG(), 50);
     }
 }
