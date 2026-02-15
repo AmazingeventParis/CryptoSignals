@@ -96,13 +96,13 @@ async def send_signal(signal: dict):
     return msg_id
 
 
-async def answer_callback_query(callback_id: str, text: str):
-    """Repond a un callback de bouton inline."""
+async def answer_callback_query(callback_id: str, text: str = ""):
+    """Repond a un callback de bouton inline (toast discret, pas de popup)."""
     try:
         async with httpx.AsyncClient() as client:
             await client.post(
                 f"{BASE_URL}/answerCallbackQuery",
-                json={"callback_query_id": callback_id, "text": text, "show_alert": True},
+                json={"callback_query_id": callback_id, "text": text, "show_alert": False},
                 timeout=10,
             )
     except Exception as e:

@@ -151,7 +151,7 @@ async def telegram_webhook(request: Request):
                 return {"ok": True}
 
             await edit_message_reply_markup(chat_id, message_id)
-            await answer_callback_query(callback_id, "Choisis le montant...")
+            await answer_callback_query(callback_id)
 
             import json as _json
             signal_data = {
@@ -167,10 +167,10 @@ async def telegram_webhook(request: Request):
             from app.services.telegram_bot import send_message
             lev = signal.get("leverage", 10)
             await send_message(
-                f"\U0001f4b0 <b>Combien de marge veux-tu mettre ? (USDT)</b>\n\n"
-                f"\U0001f4ca {signal['symbol']} {signal['direction'].upper()} | Levier {lev}x\n"
-                f"\u2139\ufe0f 10$ de marge = {10 * lev}$ de position\n\n"
-                f"<i>Clique un montant ou tape le montant que tu veux :</i>",
+                f"\U0001f4b0 <b>Combien de marge ? (USDT)</b>\n\n"
+                f"{signal['symbol']} {signal['direction'].upper()} | Levier {lev}x\n"
+                f"10$ = {10 * lev}$ de position\n\n"
+                f"\u2b07\ufe0f Choisis un bouton OU tape ton montant ci-dessous \u2b07\ufe0f",
                 reply_markup={
                     "inline_keyboard": [
                         [
@@ -245,7 +245,7 @@ async def _ask_order_type(
     from app.services.telegram_bot import send_message
 
     if callback_id:
-        await answer_callback_query(callback_id, f"{margin_usdt}$ selectionne")
+        await answer_callback_query(callback_id)
     if message_id:
         await edit_message_reply_markup(int(chat_id), message_id)
 
@@ -298,8 +298,7 @@ async def _do_execute(
     margin_usdt = pending.get("margin_usdt", 10)
 
     if callback_id:
-        label = "MARKET" if order_type == "market" else "LIMIT"
-        await answer_callback_query(callback_id, f"Execution {label} avec {margin_usdt}$...")
+        await answer_callback_query(callback_id)
     if message_id:
         await edit_message_reply_markup(int(chat_id), message_id)
 
