@@ -85,6 +85,20 @@ CREATE TABLE IF NOT EXISTS paper_portfolio (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS setup_performance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    setup_type TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    total_trades INTEGER DEFAULT 0,
+    wins INTEGER DEFAULT 0,
+    losses INTEGER DEFAULT 0,
+    total_pnl REAL DEFAULT 0.0,
+    disabled INTEGER DEFAULT 0,
+    last_updated TEXT,
+    UNIQUE(setup_type, symbol, mode)
+);
+
 CREATE TABLE IF NOT EXISTS active_positions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     signal_id INTEGER REFERENCES signals(id),
@@ -405,6 +419,58 @@ async def update_paper_balance(pnl: float, is_win: bool, margin: float):
             (pnl, margin, 1 if is_win else 0, 0 if is_win else 1, pnl, pnl, pnl),
         )
         await db.commit()
+
+
+# --- Setup Performance (apprentissage) ---
+
+async def update_setup_performance(setup_type: str, symbol: str, mode: str, is_win: bool, pnl: float):
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            """INSERT INTO setup_performance (setup_type, symbol, mode, total_trades, wins, losses, total_pnl, last_updated)
+            VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+            ON CONFLICT(setup_type, symbol, mode) DO UPDATE SET
+                total_trades = total_trades + 1,
+                wins = wins + ?,
+                losses = losses + ?,
+                total_pnl = total_pnl + ?,
+                last_updated = ?""",
+            (
+                setup_type, symbol, mode,
+                1 if is_win else 0, 0 if is_win else 1, pnl, now,
+                1 if is_win else 0, 0 if is_win else 1, pnl, now,
+            ),
+        )
+        await db.commit()
+
+
+async def set_setup_disabled(setup_type: str, symbol: str, mode: str, disabled: bool):
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            "UPDATE setup_performance SET disabled = ? WHERE setup_type = ? AND symbol = ? AND mode = ?",
+            (1 if disabled else 0, setup_type, symbol, mode),
+        )
+        await db.commit()
+
+
+async def get_disabled_setups(symbol: str, mode: str) -> list[str]:
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        cursor = await db.execute(
+            "SELECT setup_type FROM setup_performance WHERE symbol = ? AND mode = ? AND disabled = 1",
+            (symbol, mode),
+        )
+        rows = await cursor.fetchall()
+        return [r[0] for r in rows]
+
+
+async def get_all_setup_performance() -> list[dict]:
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM setup_performance ORDER BY total_trades DESC"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
 
 
 async def reset_paper_portfolio(initial_balance: float = 100.0):

@@ -95,6 +95,7 @@ class PositionMonitor:
             "tp3_order_id": result["tp_order_ids"][2] if len(result.get("tp_order_ids", [])) > 2 else None,
             "entry_order_id": result.get("entry_order_id"),
             "mode": signal.get("mode"),
+            "setup_type": signal.get("setup_type", "unknown"),
         }
 
         pos_id = await insert_active_position(pos_data)
@@ -468,6 +469,22 @@ class PositionMonitor:
             "notes": f"{close_reason} tp1={pos.get('tp1_hit',0)} tp2={pos.get('tp2_hit',0)} tp3={pos.get('tp3_hit',0)}",
         })
         logger.info(f"Trade journalise: {pos['symbol']} {result} PnL={pnl_usd:.2f}$ ({close_reason})")
+
+        # Apprentissage : enregistrer le resultat par setup/symbol/mode
+        try:
+            from app.core.trade_learner import trade_learner
+            setup_type = pos.get("setup_type", "unknown")
+            if setup_type == "unknown" and pos.get("signal_id"):
+                from app.database import get_signal_by_id
+                sig = await get_signal_by_id(pos["signal_id"])
+                if sig:
+                    setup_type = sig.get("setup_type", "unknown")
+            await trade_learner.record_trade(
+                setup_type, pos["symbol"], pos.get("mode", "unknown"),
+                pnl_usd > 0, pnl_usd,
+            )
+        except Exception as e:
+            logger.error(f"Erreur trade_learner: {e}")
 
         # Appeler les callbacks de fermeture (paper trader etc.)
         for cb in self._on_close_callbacks:

@@ -205,6 +205,14 @@ async def execute_from_web(signal_id: int, body: dict = {}):
     }
 
 
+@router.get("/learning")
+async def get_learning_stats():
+    """Stats d'apprentissage par setup/symbol/mode."""
+    from app.core.trade_learner import trade_learner
+    stats = await trade_learner.get_all_stats()
+    return {"stats": stats, "count": len(stats)}
+
+
 @router.get("/sentiment")
 async def get_sentiment():
     """Retourne le sentiment actuel du marche."""

@@ -101,7 +101,14 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     # =========================================
     # COUCHE C : ENTRY TRIGGER (timeframe analyse)
     # =========================================
-    allowed_setups = mode_cfg["entry"]["setups"]
+    from app.core.trade_learner import trade_learner
+    allowed_setups = list(mode_cfg["entry"]["setups"])
+    allowed_setups = await trade_learner.filter_setups(allowed_setups, symbol, mode)
+    if not allowed_setups:
+        return _no_trade(
+            symbol, mode, "Tous les setups desactives par apprentissage",
+            direction["signals"], tradeability["score"]
+        )
     entry = find_best_entry(indicators_analysis, df_analysis, direction_bias, allowed_setups)
 
     if not entry:
