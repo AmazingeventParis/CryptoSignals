@@ -110,6 +110,11 @@ body {
     background: rgba(88,166,255,0.15); color: var(--blue);
 }
 .signal-time { font-size: 11px; color: var(--text-secondary); }
+.signal-test {
+    font-size: 10px; padding: 2px 8px; border-radius: 3px; font-weight: 700;
+    background: rgba(210,153,34,0.2); color: var(--orange); letter-spacing: 0.5px;
+}
+.signal-card-test { border-color: rgba(210,153,34,0.3); }
 
 /* Trades */
 .trade-card {

@@ -155,12 +155,16 @@ function renderSignals(signals) {
             actionsHtml = '<div class="signal-actions"><span class="signal-status status-error">Erreur</span></div>';
         }
 
+        const isTest = status === 'test';
+        const testBadge = isTest ? '<span class="signal-test">SIMULATION</span>' : '';
+
         return `
-        <div class="signal-card" id="signal-card-${s.id || 0}">
+        <div class="signal-card ${isTest ? 'signal-card-test' : ''}" id="signal-card-${s.id || 0}" data-status="${status}">
             <div class="signal-header">
                 <div style="display:flex;align-items:center;gap:8px">
                     <span class="signal-pair">${s.symbol}</span>
                     <span class="signal-mode">${s.mode}</span>
+                    ${testBadge}
                 </div>
                 <div style="display:flex;align-items:center;gap:8px">
                     <span class="signal-time">${time}</span>
@@ -644,11 +648,13 @@ function openExecModal(signalId, orderType, margin) {
     const isLimit = orderType === 'limit';
     const needsInput = margin === 0;
 
+    const isTest = card.getAttribute('data-status') === 'test';
     const title = document.getElementById('modal-title');
     const body = document.getElementById('modal-body');
     const confirmBtn = document.getElementById('modal-confirm');
 
     title.textContent = isLimit ? `LIMIT ${direction} ${symbol}` : `MARKET ${direction} ${symbol}`;
+    if (isTest) title.textContent = `SIMULATION - ${title.textContent}`;
 
     let inputHtml = '';
     if (needsInput) {
@@ -658,7 +664,10 @@ function openExecModal(signalId, orderType, margin) {
     const displayMargin = needsInput ? '...' : `${margin}$`;
     const displayPosition = needsInput ? '...' : `${margin * lev}$`;
 
+    const testWarning = isTest ? `<div style="background:rgba(210,153,34,0.15);border:1px solid rgba(210,153,34,0.3);border-radius:6px;padding:8px;margin-bottom:12px;font-size:12px;color:var(--orange);text-align:center;font-weight:600">&#x1F9EA; SIMULATION - Aucun ordre reel ne sera place</div>` : '';
+
     body.innerHTML = `
+        ${testWarning}
         <div class="row"><span class="lbl">Direction</span><span class="val" style="color:${direction==='LONG'?'var(--green)':'var(--red)'}">${direction}</span></div>
         <div class="row"><span class="lbl">Type</span><span class="val">${isLimit ? 'LIMIT' : 'MARKET'}</span></div>
         <div class="row"><span class="lbl">Levier</span><span class="val">${lev}x</span></div>
