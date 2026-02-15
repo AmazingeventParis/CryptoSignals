@@ -3,7 +3,7 @@ API REST endpoints.
 """
 import asyncio
 from fastapi import APIRouter, Query
-from app.database import get_signals, get_trades, get_stats
+from app.database import get_signals, get_trades, get_stats, get_active_positions
 from app.core.scanner import scanner
 from app.core.market_data import market_data
 from app.config import get_enabled_pairs, SETTINGS, APP_MODE, reload_settings, get_mode_config
@@ -129,6 +129,12 @@ async def debug_pair(symbol: str, mode: str = Query("scalping")):
     data = await market_data.fetch_all_data(symbol_fmt, tfs)
     result = await analyze_pair(symbol_fmt, data, mode)
     return result
+
+
+@router.get("/positions")
+async def list_positions():
+    positions = await get_active_positions()
+    return {"positions": positions, "count": len(positions)}
 
 
 @router.post("/test-signal")

@@ -70,6 +70,42 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
     rsi REAL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS active_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id INTEGER REFERENCES signals(id),
+    symbol TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    stop_loss REAL NOT NULL,
+    tp1 REAL NOT NULL,
+    tp2 REAL NOT NULL,
+    tp3 REAL NOT NULL,
+    original_quantity REAL NOT NULL,
+    remaining_quantity REAL NOT NULL,
+    tp1_close_pct INTEGER DEFAULT 40,
+    tp2_close_pct INTEGER DEFAULT 30,
+    tp3_close_pct INTEGER DEFAULT 30,
+    leverage INTEGER DEFAULT 10,
+    position_size_usd REAL,
+    margin_required REAL,
+    sl_order_id TEXT,
+    tp1_order_id TEXT,
+    tp2_order_id TEXT,
+    tp3_order_id TEXT,
+    entry_order_id TEXT,
+    state TEXT DEFAULT 'active',
+    tp1_hit INTEGER DEFAULT 0,
+    tp2_hit INTEGER DEFAULT 0,
+    tp3_hit INTEGER DEFAULT 0,
+    sl_hit INTEGER DEFAULT 0,
+    mode TEXT,
+    entry_time TEXT DEFAULT CURRENT_TIMESTAMP,
+    closed_at TEXT,
+    close_reason TEXT,
+    pnl_usd REAL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -231,3 +267,61 @@ async def get_stats() -> dict:
             "win_rate": round(wins["c"] / max(total["c"], 1) * 100, 1),
             "total_pnl_usd": round(pnl["total"], 2),
         }
+
+
+# --- Active Positions (trailing stop) ---
+
+async def insert_active_position(pos: dict) -> int:
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        cursor = await db.execute(
+            """INSERT INTO active_positions
+            (signal_id, symbol, direction, entry_price, stop_loss,
+             tp1, tp2, tp3, original_quantity, remaining_quantity,
+             tp1_close_pct, tp2_close_pct, tp3_close_pct,
+             leverage, position_size_usd, margin_required,
+             sl_order_id, tp1_order_id, tp2_order_id, tp3_order_id,
+             entry_order_id, mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                pos.get("signal_id"),
+                pos["symbol"], pos["direction"], pos["entry_price"], pos["stop_loss"],
+                pos["tp1"], pos["tp2"], pos["tp3"],
+                pos["original_quantity"], pos["remaining_quantity"],
+                pos.get("tp1_close_pct", 40), pos.get("tp2_close_pct", 30), pos.get("tp3_close_pct", 30),
+                pos.get("leverage", 10),
+                pos.get("position_size_usd"), pos.get("margin_required"),
+                pos.get("sl_order_id"), pos.get("tp1_order_id"),
+                pos.get("tp2_order_id"), pos.get("tp3_order_id"),
+                pos.get("entry_order_id"), pos.get("mode"),
+            ),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_active_positions() -> list[dict]:
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM active_positions WHERE state != 'closed' ORDER BY id"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def update_position(position_id: int, updates: dict):
+    if not updates:
+        return
+    set_clauses = ", ".join(f"{k} = ?" for k in updates.keys())
+    values = list(updates.values()) + [position_id]
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            f"UPDATE active_positions SET {set_clauses} WHERE id = ?",
+            values,
+        )
+        await db.commit()
+
+
+async def close_position(position_id: int, updates: dict):
+    updates["state"] = "closed"
+    await update_position(position_id, updates)

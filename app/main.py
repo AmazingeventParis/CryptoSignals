@@ -17,6 +17,7 @@ from app.config import SETTINGS, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID
 from app.database import init_db, get_signal_by_id, update_signal_status
 from app.core.market_data import market_data
 from app.core.scanner import scanner
+from app.core.position_monitor import position_monitor
 from app.core.order_executor import execute_signal
 from app.api.routes import router
 from app.services.telegram_bot import (
@@ -60,12 +61,18 @@ async def lifespan(app: FastAPI):
     scanner_task = asyncio.create_task(scanner.start())
     logger.info("Scanner lance en arriere-plan")
 
+    # Lancer le position monitor (trailing stop)
+    monitor_task = asyncio.create_task(position_monitor.start())
+    logger.info("Position Monitor lance en arriere-plan")
+
     yield
 
     # Shutdown
     logger.info("Arret du bot...")
     await scanner.stop()
     scanner_task.cancel()
+    await position_monitor.stop()
+    monitor_task.cancel()
     await market_data.close()
 
 

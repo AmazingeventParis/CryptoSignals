@@ -5,6 +5,7 @@ Verifie le prix actuel, puis: Entree market + Stop Loss + Take Profits (3 niveau
 import logging
 from app.core.market_data import market_data
 from app.core.risk_manager import calculate_position_size
+from app.core.position_monitor import position_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ async def execute_signal(signal: dict, margin_usdt: float = None, order_type: st
                 logger.error(f"Erreur TP{i+1}: {e}")
                 tp_order_ids.append(None)
 
-        return {
+        result_dict = {
             "success": True,
             "order_type": order_type,
             "entry_order_id": entry_id,
@@ -218,6 +219,22 @@ async def execute_signal(signal: dict, margin_usdt: float = None, order_type: st
             "margin_required": round(margin_required, 2),
             "balance": total_balance,
         }
+
+        # Enregistrer pour le position monitor (trailing stop)
+        try:
+            signal_for_monitor = {
+                **signal,
+                "entry_price": actual_entry,
+                "stop_loss": stop_loss,
+                "tp1": tp1,
+                "tp2": tp2,
+                "tp3": tp3,
+            }
+            await position_monitor.register_trade(signal_for_monitor, result_dict)
+        except Exception as e:
+            logger.error(f"Erreur register position: {e}")
+
+        return result_dict
 
     except Exception as e:
         logger.error(f"Erreur execution signal: {e}", exc_info=True)
