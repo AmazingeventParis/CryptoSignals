@@ -316,7 +316,7 @@ body {
 }
 .pos-price-item { text-align: center; }
 .pos-price-label { color: var(--text-secondary); margin-bottom: 2px; }
-.pos-price-val { font-family: monospace; font-weight: 600; font-size: 14px; }
+.pos-price-val { font-family: monospace; font-weight: 700; font-size: 18px; }
 .pos-current-price { color: var(--blue); }
 .pos-levels {
     display: flex; gap: 6px; margin-top: 10px; padding-top: 8px;
