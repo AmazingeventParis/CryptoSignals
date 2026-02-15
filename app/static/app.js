@@ -1135,89 +1135,67 @@ function initPopupChart() {
         visible: popupShowVol,
     });
 
-    // --- Selection Zoom (double-clic pour activer, drag rectangle, zoom) ---
-    const selCanvas = document.createElement('canvas');
-    selCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:5;';
-    container.appendChild(selCanvas);
-    let zoomMode = false;
-    let selStart = null;
-    let selRect = null;
+    // --- Selection Zoom (double-clic → dessiner rectangle → zoom) ---
+    // Overlay div qui capture TOUS les events pendant le zoom mode
+    const zoomOverlay = document.createElement('div');
+    zoomOverlay.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:100;display:none;cursor:crosshair;';
+    container.appendChild(zoomOverlay);
 
-    // Bandeau indicateur zoom mode
+    const selBox = document.createElement('div');
+    selBox.style.cssText = 'position:absolute;border:2px dashed rgba(88,166,255,0.8);background:rgba(88,166,255,0.12);display:none;pointer-events:none;';
+    zoomOverlay.appendChild(selBox);
+
     const zoomBanner = document.createElement('div');
-    zoomBanner.style.cssText = 'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:6;background:rgba(88,166,255,0.9);color:#000;padding:4px 16px;border-radius:6px;font-size:12px;font-weight:700;display:none;pointer-events:none;';
-    zoomBanner.textContent = 'MODE ZOOM — Dessinez un rectangle';
-    container.appendChild(zoomBanner);
+    zoomBanner.style.cssText = 'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:101;background:rgba(88,166,255,0.9);color:#000;padding:5px 18px;border-radius:6px;font-size:13px;font-weight:700;pointer-events:none;';
+    zoomBanner.textContent = 'ZOOM — Dessinez un rectangle';
+    zoomOverlay.appendChild(zoomBanner);
 
-    container.addEventListener('dblclick', (e) => {
-        zoomMode = true;
-        container.style.cursor = 'crosshair';
-        zoomBanner.style.display = 'block';
-        selCanvas.width = container.clientWidth;
-        selCanvas.height = container.clientHeight;
-        selCanvas.style.pointerEvents = 'auto';
+    let selStart = null;
+
+    container.addEventListener('dblclick', () => {
+        zoomOverlay.style.display = 'block';
     });
 
-    selCanvas.addEventListener('mousedown', (e) => {
-        if (!zoomMode) return;
+    zoomOverlay.addEventListener('mousedown', (e) => {
         selStart = { x: e.offsetX, y: e.offsetY };
+        selBox.style.display = 'block';
+        selBox.style.left = selStart.x + 'px';
+        selBox.style.top = selStart.y + 'px';
+        selBox.style.width = '0px';
+        selBox.style.height = '0px';
         e.preventDefault();
-        e.stopPropagation();
     });
 
-    selCanvas.addEventListener('mousemove', (e) => {
-        if (!zoomMode || !selStart) return;
-        selRect = {
-            x: Math.min(selStart.x, e.offsetX),
-            y: Math.min(selStart.y, e.offsetY),
-            w: Math.abs(e.offsetX - selStart.x),
-            h: Math.abs(e.offsetY - selStart.y),
-        };
-        const ctx = selCanvas.getContext('2d');
-        ctx.clearRect(0, 0, selCanvas.width, selCanvas.height);
-        ctx.fillStyle = 'rgba(88, 166, 255, 0.15)';
-        ctx.fillRect(selRect.x, selRect.y, selRect.w, selRect.h);
-        ctx.strokeStyle = 'rgba(88, 166, 255, 0.6)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 3]);
-        ctx.strokeRect(selRect.x, selRect.y, selRect.w, selRect.h);
-        ctx.setLineDash([]);
+    zoomOverlay.addEventListener('mousemove', (e) => {
+        if (!selStart) return;
+        const x = Math.min(selStart.x, e.offsetX);
+        const y = Math.min(selStart.y, e.offsetY);
+        const w = Math.abs(e.offsetX - selStart.x);
+        const h = Math.abs(e.offsetY - selStart.y);
+        selBox.style.left = x + 'px';
+        selBox.style.top = y + 'px';
+        selBox.style.width = w + 'px';
+        selBox.style.height = h + 'px';
     });
 
-    selCanvas.addEventListener('mouseup', (e) => {
-        if (!zoomMode) return;
-        if (selStart && selRect && selRect.w > 20) {
+    zoomOverlay.addEventListener('mouseup', (e) => {
+        const endX = e.offsetX;
+        const w = Math.abs(endX - (selStart ? selStart.x : 0));
+        if (selStart && w > 30) {
+            const leftX = Math.min(selStart.x, endX);
+            const rightX = Math.max(selStart.x, endX);
             const ts = popupChart.timeScale();
-            const leftTime = ts.coordinateToTime(selRect.x);
-            const rightTime = ts.coordinateToTime(selRect.x + selRect.w);
+            const leftTime = ts.coordinateToTime(leftX);
+            const rightTime = ts.coordinateToTime(rightX);
             if (leftTime && rightTime) {
                 ts.setVisibleRange({ from: leftTime, to: rightTime });
+                setTimeout(() => drawPopupFVG(), 50);
             }
-            setTimeout(() => drawPopupFVG(), 50);
         }
-        // Quitter le mode zoom
-        zoomMode = false;
+        // Fermer le mode zoom
         selStart = null;
-        selRect = null;
-        container.style.cursor = '';
-        zoomBanner.style.display = 'none';
-        const ctx = selCanvas.getContext('2d');
-        ctx.clearRect(0, 0, selCanvas.width, selCanvas.height);
-        selCanvas.style.pointerEvents = 'none';
-    });
-
-    // Escape pour quitter le mode zoom
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && zoomMode) {
-            zoomMode = false;
-            selStart = null;
-            selRect = null;
-            container.style.cursor = '';
-            zoomBanner.style.display = 'none';
-            const ctx = selCanvas.getContext('2d');
-            ctx.clearRect(0, 0, selCanvas.width, selCanvas.height);
-            selCanvas.style.pointerEvents = 'none';
-        }
+        selBox.style.display = 'none';
+        zoomOverlay.style.display = 'none';
     });
 
     popupFvgCanvas = document.createElement('canvas');
