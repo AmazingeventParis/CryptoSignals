@@ -1070,8 +1070,8 @@ let popupEntryLine = null;
 function openChartModal(symbol, entryPrice, direction) {
     popupPair = symbol;
     popupTimeframe = '5m';
-    popupShowVol = true;
-    popupShowFVG = true;
+    popupShowVol = false;
+    popupShowFVG = false;
     popupEntryPrice = entryPrice || null;
     popupDirection = direction || null;
 
@@ -1081,8 +1081,8 @@ function openChartModal(symbol, entryPrice, direction) {
     // Reset TF buttons
     document.querySelectorAll('.popup-tf-btn').forEach(b => b.classList.remove('active'));
     document.querySelector('.popup-tf-btn[onclick="popupChangeTimeframe(\'5m\')"]').classList.add('active');
-    document.getElementById('popup-vol-toggle').classList.add('active');
-    document.getElementById('popup-fvg-toggle').classList.add('active');
+    document.getElementById('popup-vol-toggle').classList.remove('active');
+    document.getElementById('popup-fvg-toggle').classList.remove('active');
 
     // Init chart apres un frame (pour que le container ait sa taille)
     requestAnimationFrame(() => {
@@ -1132,6 +1132,62 @@ function initPopupChart() {
         priceFormat: { type: 'volume' },
         priceScaleId: '',
         scaleMargins: { top: 0.8, bottom: 0 },
+        visible: popupShowVol,
+    });
+
+    // --- Selection Zoom (drag rectangle to zoom) ---
+    const selCanvas = document.createElement('canvas');
+    selCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:5;';
+    container.appendChild(selCanvas);
+    let selStart = null;
+    let selRect = null;
+
+    container.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || e.shiftKey === false) return; // Shift+click pour selection
+        selStart = { x: e.offsetX, y: e.offsetY };
+        selCanvas.width = container.clientWidth;
+        selCanvas.height = container.clientHeight;
+        selCanvas.style.pointerEvents = 'auto';
+        e.preventDefault();
+    });
+
+    container.addEventListener('mousemove', (e) => {
+        if (!selStart) return;
+        selRect = {
+            x: Math.min(selStart.x, e.offsetX),
+            y: Math.min(selStart.y, e.offsetY),
+            w: Math.abs(e.offsetX - selStart.x),
+            h: Math.abs(e.offsetY - selStart.y),
+        };
+        const ctx = selCanvas.getContext('2d');
+        ctx.clearRect(0, 0, selCanvas.width, selCanvas.height);
+        ctx.fillStyle = 'rgba(88, 166, 255, 0.15)';
+        ctx.fillRect(selRect.x, selRect.y, selRect.w, selRect.h);
+        ctx.strokeStyle = 'rgba(88, 166, 255, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(selRect.x, selRect.y, selRect.w, selRect.h);
+    });
+
+    container.addEventListener('mouseup', (e) => {
+        if (!selStart || !selRect || selRect.w < 20) {
+            selStart = null; selRect = null;
+            const ctx = selCanvas.getContext('2d');
+            ctx.clearRect(0, 0, selCanvas.width, selCanvas.height);
+            selCanvas.style.pointerEvents = 'none';
+            return;
+        }
+        // Calculer la plage de temps visible correspondant a la selection
+        const ts = popupChart.timeScale();
+        const leftTime = ts.coordinateToTime(selRect.x);
+        const rightTime = ts.coordinateToTime(selRect.x + selRect.w);
+        if (leftTime && rightTime) {
+            ts.setVisibleRange({ from: leftTime, to: rightTime });
+        }
+        selStart = null; selRect = null;
+        const ctx = selCanvas.getContext('2d');
+        ctx.clearRect(0, 0, selCanvas.width, selCanvas.height);
+        selCanvas.style.pointerEvents = 'none';
+        setTimeout(() => drawPopupFVG(), 50);
     });
 
     popupFvgCanvas = document.createElement('canvas');
@@ -1267,6 +1323,13 @@ function drawPopupFVG() {
             ctx.strokeRect(x1, y, w, h);
         }
     });
+}
+
+function popupResetZoom() {
+    if (popupChart) {
+        popupChart.timeScale().fitContent();
+        setTimeout(() => drawPopupFVG(), 50);
+    }
 }
 
 function connectPopupWs() {
