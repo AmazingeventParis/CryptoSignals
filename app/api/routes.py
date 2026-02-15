@@ -412,17 +412,28 @@ async def send_test_signal():
         # Pas de signal valide, forcer un signal avec le prix actuel
         ticker = await market_data.fetch_ticker(symbol)
         price = ticker.get("price", 87.0)
+        direction = "long" if result.get("tradeability_score", 0) > 50 else "short"
+        if direction == "long":
+            sl = round(price * 0.998, 2)
+            tp1 = round(price * 1.002, 2)
+            tp2 = round(price * 1.003, 2)
+            tp3 = round(price * 1.005, 2)
+        else:
+            sl = round(price * 1.002, 2)
+            tp1 = round(price * 0.998, 2)
+            tp2 = round(price * 0.997, 2)
+            tp3 = round(price * 0.995, 2)
         result = {
             "type": "signal",
             "symbol": symbol,
             "mode": mode,
-            "direction": "long" if result.get("tradeability_score", 0) > 50 else "short",
+            "direction": direction,
             "score": 65,
             "entry_price": round(price, 2),
-            "stop_loss": round(price * 0.998, 2),
-            "tp1": round(price * 1.002, 2),
-            "tp2": round(price * 1.003, 2),
-            "tp3": round(price * 1.005, 2),
+            "stop_loss": sl,
+            "tp1": tp1,
+            "tp2": tp2,
+            "tp3": tp3,
             "setup_type": "test",
             "leverage": 20,
             "tp1_close_pct": 40,
