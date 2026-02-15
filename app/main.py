@@ -14,7 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import websockets
 
 from app.config import SETTINGS, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID
-from app.database import init_db, get_signal_by_id, update_signal_status
+from app.database import init_db, get_signal_by_id, update_signal_status, get_latest_active_signal
 from app.core.market_data import market_data
 from app.core.scanner import scanner
 from app.core.order_executor import execute_signal
@@ -104,9 +104,8 @@ async def health():
     return {"status": "ok", "scanner_running": scanner.running}
 
 
-# --- Telegram Webhook : boutons EXECUTE/SKIP + saisie montant + type ordre ---
-# Etat en attente : {chat_id: {"signal_id", "signal", "step", "margin_usdt"}}
-# step = "amount" (on attend le montant) | "type" (on attend market/limit)
+# --- Telegram Webhook ---
+# pending : pour LIMIT (attend montant libre)
 pending_executions: dict = {}
 
 
@@ -138,20 +137,25 @@ async def telegram_webhook(request: Request):
         if str(chat_id) != str(TELEGRAM_CHAT_ID):
             return {"ok": True}
 
-        # === ETAPE 1 : EXECUTE clique -> demande montant ===
-        if data.startswith("exec_"):
+        # === GO : 1 clic = montant + MARKET direct ===
+        if data.startswith("go_"):
+            parts = data.split("_")
+            margin_usdt = float(parts[1])
+            signal_id = int(parts[2])
+            await answer_callback_query(callback_id)
+            await edit_message_reply_markup(chat_id, message_id)
+            await _do_execute(str(chat_id), signal_id, "market", margin_usdt=margin_usdt)
+
+        # === LIMIT : demande montant puis place ordre limit ===
+        elif data.startswith("lmt_"):
             signal_id = int(data.split("_")[1])
             signal = await get_signal_by_id(signal_id)
-
             if not signal:
-                await answer_callback_query(callback_id, "Signal introuvable")
-                return {"ok": True}
-            if signal["status"] == "executed":
-                await answer_callback_query(callback_id, "Deja execute !")
+                await answer_callback_query(callback_id)
                 return {"ok": True}
 
-            await edit_message_reply_markup(chat_id, message_id)
             await answer_callback_query(callback_id)
+            await edit_message_reply_markup(chat_id, message_id)
 
             import json as _json
             signal_data = {
@@ -161,46 +165,37 @@ async def telegram_webhook(request: Request):
             pending_executions[str(chat_id)] = {
                 "signal_id": signal_id,
                 "signal": signal_data,
-                "step": "amount",
+                "step": "limit_amount",
             }
 
             from app.services.telegram_bot import send_message
+            dec = _get_decimals(signal["entry_price"])
             lev = signal.get("leverage", 10)
             await send_message(
-                f"\U0001f4b0 <b>Combien de marge ? (USDT)</b>\n\n"
-                f"{signal['symbol']} {signal['direction'].upper()} | Levier {lev}x\n"
-                f"10$ = {10 * lev}$ de position\n\n"
-                f"\u2b07\ufe0f Choisis un bouton OU tape ton montant ci-dessous \u2b07\ufe0f",
+                f"\U0001f4cb <b>LIMIT @ {signal['entry_price']:.{dec}f}</b> | Levier {lev}x\n"
+                f"\u2b07\ufe0f Marge ? Bouton ou tape montant",
                 reply_markup={
                     "inline_keyboard": [
                         [
-                            {"text": "5$", "callback_data": f"amt_5_{signal_id}"},
-                            {"text": "10$", "callback_data": f"amt_10_{signal_id}"},
-                            {"text": "25$", "callback_data": f"amt_25_{signal_id}"},
-                            {"text": "50$", "callback_data": f"amt_50_{signal_id}"},
+                            {"text": "5$", "callback_data": f"lgo_5_{signal_id}"},
+                            {"text": "10$", "callback_data": f"lgo_10_{signal_id}"},
+                            {"text": "25$", "callback_data": f"lgo_25_{signal_id}"},
+                            {"text": "50$", "callback_data": f"lgo_50_{signal_id}"},
                         ],
                         [{"text": "\u274c Annuler", "callback_data": f"cancel_{signal_id}"}],
                     ]
                 },
             )
 
-        # === ETAPE 2 : montant clique -> demande type d'ordre ===
-        elif data.startswith("amt_"):
+        # === LIMIT GO : montant choisi -> place ordre limit ===
+        elif data.startswith("lgo_"):
             parts = data.split("_")
             margin_usdt = float(parts[1])
             signal_id = int(parts[2])
-            await _ask_order_type(str(chat_id), signal_id, margin_usdt, callback_id, message_id)
-
-        # === ETAPE 3 : type d'ordre choisi -> execute ===
-        elif data.startswith("mkt_"):
-            parts = data.split("_")
-            signal_id = int(parts[1])
-            await _do_execute(str(chat_id), signal_id, "market", callback_id, message_id)
-
-        elif data.startswith("lmt_"):
-            parts = data.split("_")
-            signal_id = int(parts[1])
-            await _do_execute(str(chat_id), signal_id, "limit", callback_id, message_id)
+            await answer_callback_query(callback_id)
+            await edit_message_reply_markup(chat_id, message_id)
+            pending_executions.pop(str(chat_id), None)
+            await _do_execute(str(chat_id), signal_id, "limit", margin_usdt=margin_usdt)
 
         elif data.startswith("skip_"):
             signal_id = int(data.split("_")[1])
@@ -225,133 +220,77 @@ async def telegram_webhook(request: Request):
         if chat_id != str(TELEGRAM_CHAT_ID):
             return {"ok": True}
 
-        pending = pending_executions.get(chat_id)
-        if pending and pending.get("step") == "amount" and text:
+        if text:
             import re
             match = re.match(r"^(\d+\.?\d*)", text.replace(",", "."))
             if match:
                 margin_usdt = float(match.group(1))
-                signal_id = pending["signal_id"]
-                await _ask_order_type(chat_id, signal_id, margin_usdt)
+                pending = pending_executions.pop(chat_id, None)
+                if pending:
+                    # En attente LIMIT
+                    signal_id = pending["signal_id"]
+                    await _do_execute(chat_id, signal_id, "limit", margin_usdt=margin_usdt)
+                else:
+                    # Pas de pending -> MARKET sur le dernier signal actif
+                    latest = await get_latest_active_signal()
+                    if latest:
+                        await _do_execute(chat_id, latest["id"], "market", margin_usdt=margin_usdt)
 
     return {"ok": True}
 
 
-async def _ask_order_type(
-    chat_id: str, signal_id: int, margin_usdt: float,
-    callback_id: str = None, message_id: int = None,
-):
-    """Etape 2 -> 3 : le montant est choisi, on demande MARKET ou LIMIT."""
-    from app.services.telegram_bot import send_message
-
-    if callback_id:
-        await answer_callback_query(callback_id)
-    if message_id:
-        await edit_message_reply_markup(int(chat_id), message_id)
-
-    # Mettre a jour le pending avec le montant + passer a l'etape type
-    pending = pending_executions.get(chat_id)
-    if not pending:
-        return
-    pending["margin_usdt"] = margin_usdt
-    pending["step"] = "type"
-
-    signal = pending["signal"]
-    entry = signal["entry_price"]
-    dec = _get_decimals(entry)
-    lev = signal.get("leverage", 10)
-    position_usd = margin_usdt * lev
-
-    await send_message(
-        f"\U0001f4ca <b>Type d'ordre ?</b>\n\n"
-        f"{signal['symbol']} {signal['direction'].upper()} | "
-        f"Marge {margin_usdt}$ | Position {position_usd}$\n\n"
-        f"\u26a1 <b>MARKET</b> = entre maintenant au prix du marche\n"
-        f"\U0001f4cb <b>LIMIT {entry:.{dec}f}</b> = ordre en attente, "
-        f"s'execute quand le prix atteint {entry:.{dec}f}",
-        reply_markup={
-            "inline_keyboard": [
-                [
-                    {"text": "\u26a1 MARKET (maintenant)", "callback_data": f"mkt_{signal_id}"},
-                    {"text": f"\U0001f4cb LIMIT @ {entry:.{dec}f}", "callback_data": f"lmt_{signal_id}"},
-                ],
-                [{"text": "\u274c Annuler", "callback_data": f"cancel_{signal_id}"}],
-            ]
-        },
-    )
-
-
 async def _do_execute(
-    chat_id: str, signal_id: int, order_type: str,
-    callback_id: str = None, message_id: int = None,
+    chat_id: str, signal_id: int, order_type: str, margin_usdt: float = 10,
 ):
-    """Etape 3 : execute l'ordre (market ou limit)."""
+    """Execute l'ordre (market ou limit) avec le montant choisi."""
     from app.services.telegram_bot import send_message, send_execution_result
 
-    pending = pending_executions.pop(chat_id, None)
-    if not pending:
-        if callback_id:
-            await answer_callback_query(callback_id, "Session expiree, recommence")
+    # Recuperer le signal
+    signal_db = await get_signal_by_id(signal_id)
+    if not signal_db:
+        await send_message("\u274c Signal introuvable")
         return
 
-    signal_data = pending["signal"]
-    margin_usdt = pending.get("margin_usdt", 10)
+    import json as _json
+    signal_data = {
+        **signal_db,
+        "reasons": _json.loads(signal_db.get("reasons", "[]")) if isinstance(signal_db.get("reasons"), str) else signal_db.get("reasons", []),
+    }
 
-    if callback_id:
-        await answer_callback_query(callback_id)
-    if message_id:
-        await edit_message_reply_markup(int(chat_id), message_id)
+    if signal_db.get("status") == "executed":
+        await send_message("\u274c Deja execute")
+        return
 
     lev = signal_data.get("leverage", 10)
-    position_usd = margin_usdt * lev
-    label = "MARKET (immediat)" if order_type == "market" else f"LIMIT @ {signal_data['entry_price']}"
-
-    # Verifier si c'est un signal de test
-    signal_db = await get_signal_by_id(signal_id)
-    is_test = signal_db and signal_db.get("status") == "test"
+    is_test = signal_db.get("status") == "test"
 
     if is_test:
-        # SIMULATION : ne rien executer, juste montrer le resultat
-        await send_message(
-            f"\u23f3 <b>SIMULATION en cours...</b>\n"
-            f"Type: {label}\n"
-            f"Marge: {margin_usdt}$ | Position: {position_usd}$ | Levier: {lev}x"
-        )
-        # Faux resultat
+        # SIMULATION
+        position_usd = margin_usdt * lev
         fake_result = {
             "success": True,
             "order_type": order_type,
-            "entry_order_id": "TEST-000",
+            "entry_order_id": "TEST",
             "actual_entry_price": signal_data["entry_price"],
-            "sl_order_id": "TEST-SL",
-            "tp_order_ids": ["TEST-TP1", "TEST-TP2", "TEST-TP3"],
+            "sl_order_id": "TEST",
+            "tp_order_ids": ["TEST", "TEST", "TEST"],
             "quantity": round(position_usd / signal_data["entry_price"], 6),
             "position_size_usd": position_usd,
             "margin_required": margin_usdt,
             "balance": 100.0,
         }
         await send_execution_result(signal_data, fake_result)
-        await send_message(
-            "\U0001f9ea <b>CECI ETAIT UNE SIMULATION</b>\n"
-            "Aucun ordre n'a ete place sur MEXC."
-        )
-        logger.info(f"Signal TEST {signal_id} simule ({order_type}, {margin_usdt}$)")
+        await send_message("\U0001f9ea <b>SIMULATION</b> - Aucun ordre place")
         return
 
     # EXECUTION REELLE
-    await send_message(
-        f"\u23f3 <b>Execution en cours...</b>\n"
-        f"Type: {label}\n"
-        f"Marge: {margin_usdt}$ | Position: {position_usd}$ | Levier: {lev}x"
-    )
-
     result = await execute_signal(signal_data, margin_usdt=margin_usdt, order_type=order_type)
 
     new_status = "executed" if result["success"] else "error"
     await update_signal_status(signal_id, new_status)
 
     await send_execution_result(signal_data, result)
-    logger.info(f"Signal {signal_id} {order_type} {margin_usdt}$ marge: {result.get('success')}")
+    logger.info(f"Signal {signal_id} {order_type} {margin_usdt}$ : {result.get('success')}")
 
 
 # --- WebSocket relay MEXC temps reel ---

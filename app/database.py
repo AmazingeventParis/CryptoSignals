@@ -173,6 +173,16 @@ async def update_signal_status(signal_id: int, status: str):
         await db.commit()
 
 
+async def get_latest_active_signal() -> dict | None:
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM signals WHERE status IN ('active', 'test') ORDER BY id DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
 async def get_signals(limit: int = 50, symbol: str = None, mode: str = None) -> list[dict]:
     async with aiosqlite.connect(str(DB_PATH)) as db:
         db.row_factory = aiosqlite.Row

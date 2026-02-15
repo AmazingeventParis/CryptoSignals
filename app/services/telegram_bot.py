@@ -41,55 +41,42 @@ async def send_message(text: str, parse_mode: str = "HTML", reply_markup: dict =
 
 
 async def send_signal(signal: dict):
-    """Envoie le signal avec boutons EXECUTE / SKIP."""
+    """Envoie le signal compact avec boutons montant direct (1 clic = execute)."""
     direction = signal["direction"].upper()
     emoji = "\U0001f7e2" if direction == "LONG" else "\U0001f534"
-    mode_label = "SCALPING" if signal["mode"] == "scalping" else "SWING"
-
-    score = signal["score"]
-    if score >= 80:
-        score_badge = "\U0001f525"
-    elif score >= 65:
-        score_badge = "\u26a1"
-    else:
-        score_badge = "\u2139\ufe0f"
+    mode_label = "SCALP" if signal["mode"] == "scalping" else "SWING"
 
     entry = signal["entry_price"]
-    decimals = _get_decimals(entry)
-
-    reasons_text = "\n".join(f"  \u2022 {r}" for r in signal.get("reasons", []))
+    dec = _get_decimals(entry)
     lev = signal.get("leverage", 10)
     signal_id = signal.get("id", 0)
 
-    text = f"""{'━' * 25}
-{emoji} <b>{direction}  {signal['symbol']}</b>  [{mode_label}]
-{'━' * 25}
-{score_badge} <b>Score : {score}/100</b>
-\U0001f4ca Setup : {signal.get('setup_type', 'N/A')}
+    text = (
+        f"{emoji} <b>{direction} {signal['symbol']}</b> [{mode_label}] "
+        f"Score {signal['score']}\n"
+        f"\u25b6 <code>{entry:.{dec}f}</code> | "
+        f"SL <code>{signal['stop_loss']:.{dec}f}</code> | "
+        f"TP <code>{signal['tp1']:.{dec}f}</code> / "
+        f"<code>{signal['tp2']:.{dec}f}</code> / "
+        f"<code>{signal['tp3']:.{dec}f}</code>\n"
+        f"\U0001f527 {lev}x | {signal.get('setup_type', '')} "
+        f"| R:R 1:{signal.get('rr_ratio', 0)}\n\n"
+        f"\u26a1 <b>Clique = MARKET direct</b> | Tape montant perso"
+    )
 
-\u25b6 Entree  : <code>{entry:.{decimals}f}</code>
-\U0001f6d1 Stop   : <code>{signal['stop_loss']:.{decimals}f}</code> ({signal.get('risk_pct', 0):.2f}%)
-\u2705 TP1    : <code>{signal['tp1']:.{decimals}f}</code> (fermer {signal.get('tp1_close_pct', 40)}%)
-\u2705 TP2    : <code>{signal['tp2']:.{decimals}f}</code> (fermer {signal.get('tp2_close_pct', 30)}%)
-\u2705 TP3    : <code>{signal['tp3']:.{decimals}f}</code> (fermer {signal.get('tp3_close_pct', 30)}%)
-
-\U0001f4d0 R:R    : 1:{signal.get('rr_ratio', 0)}
-\U0001f4b0 Risque : 1% du capital
-\U0001f527 Levier : {lev}x isole
-
-\U0001f4cb <b>Raisons :</b>
-{reasons_text}
-
-\u23f1 Break-even au TP1
-\u26a0\ufe0f <i>Clique EXECUTE pour placer l'ordre sur MEXC.</i>
-{'━' * 25}"""
-
-    # Boutons inline
     reply_markup = {
-        "inline_keyboard": [[
-            {"text": "\u2705 EXECUTE", "callback_data": f"exec_{signal_id}"},
-            {"text": "\u274c SKIP", "callback_data": f"skip_{signal_id}"},
-        ]]
+        "inline_keyboard": [
+            [
+                {"text": "5$", "callback_data": f"go_5_{signal_id}"},
+                {"text": "10$", "callback_data": f"go_10_{signal_id}"},
+                {"text": "25$", "callback_data": f"go_25_{signal_id}"},
+                {"text": "50$", "callback_data": f"go_50_{signal_id}"},
+            ],
+            [
+                {"text": "\U0001f4cb LIMIT @ " + f"{entry:.{dec}f}", "callback_data": f"lmt_{signal_id}"},
+                {"text": "\u274c", "callback_data": f"skip_{signal_id}"},
+            ],
+        ]
     }
 
     msg_id = await send_message(text, reply_markup=reply_markup)
@@ -150,48 +137,28 @@ async def edit_message_reply_markup(chat_id: int, message_id: int, reply_markup:
 
 
 async def send_execution_result(signal: dict, result: dict):
-    """Envoie le resultat de l'execution."""
+    """Envoie le resultat compact de l'execution."""
     if result["success"]:
         entry = result['actual_entry_price']
-        decimals = _get_decimals(float(entry)) if entry else 4
+        dec = _get_decimals(float(entry)) if entry else 4
         is_limit = result.get("order_type") == "limit"
+        sl_ok = "\u2705" if result.get('sl_order_id') else "\u274c"
+        tp_count = sum(1 for t in result.get('tp_order_ids', []) if t)
+        icon = "\U0001f4cb" if is_limit else "\U0001f680"
+        label = "LIMIT" if is_limit else "MARKET"
 
-        if is_limit:
-            header = "\U0001f4cb <b>ORDRE LIMIT PLACE !</b>"
-            entry_label = "Prix limite"
-            footer = (
-                "\u23f3 <i>L'ordre attend que le prix atteigne "
-                f"<code>{entry:.{decimals}f}</code>.\n"
-                "SL et TPs s'activeront apres le fill.\n"
-                "Va sur MEXC pour voir l'ordre en attente.</i>"
-            )
-        else:
-            header = "\U0001f680 <b>ORDRE MARKET EXECUTE !</b>"
-            entry_label = "Entree reelle"
-            footer = "\u26a0\ufe0f <i>SL et TPs sont actifs. Va sur MEXC pour verifier.</i>"
-
-        text = f"""{header}
-
-\U0001f4b9 {signal['symbol']} {signal['direction'].upper()}
-\U0001f4b0 {entry_label} : <code>{entry:.{decimals}f}</code>
-\U0001f4e6 Quantite : {result['quantity']}
-\U0001f4b5 Position : {result['position_size_usd']}$
-\U0001f512 Marge : {result['margin_required']}$
-
-\U0001f6d1 SL place : {'Oui' if result.get('sl_order_id') else 'Non'}
-\u2705 TPs places : {sum(1 for t in result.get('tp_order_ids', []) if t)}/3
-
-\U0001f3e6 Balance restante : {result['balance']:.2f} USDT
-
-{footer}"""
+        text = (
+            f"{icon} <b>{label} {signal['direction'].upper()} {signal['symbol']}</b>\n"
+            f"Entree <code>{entry:.{dec}f}</code> | {result['margin_required']}$ marge | "
+            f"{result['position_size_usd']}$ pos\n"
+            f"SL {sl_ok} | TP {tp_count}/3 \u2705 | "
+            f"Balance: {result['balance']:.2f}$"
+        )
     else:
-        text = f"""\u274c <b>EXECUTION REFUSEE</b>
-
-{signal['symbol']} {signal['direction'].upper()}
-\u26a0\ufe0f {result.get('error', 'Erreur inconnue')}
-
-<i>Le prix a peut-etre trop bouge depuis le signal.
-Attends le prochain signal.</i>"""
+        text = (
+            f"\u274c <b>REFUSE</b> {signal['symbol']} {signal['direction'].upper()}\n"
+            f"{result.get('error', 'Erreur')}"
+        )
 
     await send_message(text)
 
