@@ -90,7 +90,7 @@ class MarketData:
                 "best_ask": best_ask,
             }
         except Exception as e:
-            logger.error(f"Erreur fetch_orderbook {symbol}: {e}")
+            logger.error(f"Erreur fetch_orderbook {symbol}: {type(e).__name__}: {e}")
             return {"spread_pct": 999, "bid_depth": 0, "ask_depth": 0, "mid_price": 0}
 
     async def fetch_funding_rate(self, symbol: str) -> float:

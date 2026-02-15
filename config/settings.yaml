@@ -29,7 +29,7 @@ scalping:
   timeframes:
     analysis:
       - "1m"
-      - "3m"
+      - "5m"
     filter: "15m"
 
   entry:
