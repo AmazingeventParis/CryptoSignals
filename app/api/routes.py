@@ -217,6 +217,60 @@ async def list_positions():
     return {"positions": positions, "count": len(positions)}
 
 
+@router.get("/positions/live")
+async def live_positions():
+    """Positions actives avec prix en temps reel et P&L."""
+    positions = await get_active_positions()
+    if not positions:
+        return {"positions": [], "count": 0}
+
+    result = []
+    for pos in positions:
+        symbol = pos["symbol"]
+        try:
+            ticker = await market_data.fetch_ticker(symbol)
+            current_price = ticker.get("price", 0)
+        except Exception:
+            current_price = 0
+
+        entry = pos["entry_price"]
+        direction = pos["direction"]
+        remaining_qty = pos["remaining_quantity"]
+        original_qty = pos["original_quantity"]
+
+        # P&L realise (TP deja touches)
+        realized_pnl = 0.0
+        if pos.get("tp1_hit"):
+            tp1_qty = original_qty * (pos.get("tp1_close_pct", 40) / 100)
+            diff = (pos["tp1"] - entry) if direction == "long" else (entry - pos["tp1"])
+            realized_pnl += diff * tp1_qty
+        if pos.get("tp2_hit"):
+            tp2_qty = original_qty * (pos.get("tp2_close_pct", 30) / 100)
+            diff = (pos["tp2"] - entry) if direction == "long" else (entry - pos["tp2"])
+            realized_pnl += diff * tp2_qty
+
+        # P&L non realise (position restante)
+        if current_price > 0:
+            diff = (current_price - entry) if direction == "long" else (entry - current_price)
+            unrealized_pnl = diff * remaining_qty
+        else:
+            unrealized_pnl = 0.0
+
+        total_pnl = realized_pnl + unrealized_pnl
+        pnl_pct = (total_pnl / pos.get("margin_required", 1)) * 100 if pos.get("margin_required") else 0
+
+        result.append({
+            **pos,
+            "current_price": current_price,
+            "unrealized_pnl": round(unrealized_pnl, 4),
+            "realized_pnl": round(realized_pnl, 4),
+            "total_pnl": round(total_pnl, 4),
+            "pnl_pct": round(pnl_pct, 2),
+        })
+
+    return {"positions": result, "count": len(result)}
+
+
 @router.get("/paper/portfolio")
 async def paper_portfolio():
     """Retourne le portefeuille paper trading."""

@@ -275,6 +275,68 @@ body {
 .btn-exec:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-exec.limit { background: var(--blue); }
 
+/* Positions live */
+.positions-live { padding: 8px 0; }
+.positions-live-title {
+    font-size: 13px; font-weight: 700; color: var(--text-secondary);
+    margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+}
+.positions-live-title .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+    animation: pulse-dot 1.5s infinite;
+}
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+.pos-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px; margin-bottom: 8px;
+    border-left: 3px solid var(--blue);
+}
+.pos-card.pos-profit { border-left-color: var(--green); }
+.pos-card.pos-loss { border-left-color: var(--red); }
+.pos-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+}
+.pos-symbol { font-size: 16px; font-weight: 700; }
+.pos-pnl { font-size: 20px; font-weight: 800; font-family: monospace; }
+.pos-pnl.up { color: var(--green); }
+.pos-pnl.down { color: var(--red); }
+.pos-prices {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    font-size: 12px;
+}
+.pos-price-item { text-align: center; }
+.pos-price-label { color: var(--text-secondary); margin-bottom: 2px; }
+.pos-price-val { font-family: monospace; font-weight: 600; font-size: 14px; }
+.pos-current-price { color: var(--blue); }
+.pos-levels {
+    display: flex; gap: 6px; margin-top: 10px; padding-top: 8px;
+    border-top: 1px solid var(--border); flex-wrap: wrap;
+}
+.pos-level {
+    font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600;
+    font-family: monospace;
+}
+.pos-level-sl { background: rgba(248,81,73,0.15); color: var(--red); }
+.pos-level-tp { background: rgba(63,185,80,0.15); color: var(--green); }
+.pos-level-tp.hit { opacity: 0.4; text-decoration: line-through; }
+.pos-bar {
+    height: 4px; background: var(--border); border-radius: 2px;
+    margin-top: 8px; overflow: hidden; position: relative;
+}
+.pos-bar-fill {
+    height: 100%; border-radius: 2px; transition: width 0.3s;
+}
+.pos-state {
+    font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600;
+}
+.pos-state-active { background: rgba(88,166,255,0.15); color: var(--blue); }
+.pos-state-breakeven { background: rgba(210,153,34,0.15); color: var(--orange); }
+.pos-state-trailing { background: rgba(63,185,80,0.15); color: var(--green); }
+
 /* Responsive */
 @media (max-width: 480px) {
     .stats-row { grid-template-columns: repeat(2, 1fr); }

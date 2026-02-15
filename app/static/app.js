@@ -43,6 +43,7 @@ async function refreshAll() {
         fetchSignals(),
         fetchTrades(),
         fetchBalance(),
+        fetchLivePositions(),
     ]);
 }
 
@@ -764,6 +765,100 @@ async function confirmExec() {
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeModal();
 });
+
+// --- Positions live ---
+let liveInterval = null;
+
+async function fetchLivePositions() {
+    try {
+        const res = await fetch(`${API}/api/positions/live`);
+        const data = await res.json();
+        renderLivePositions(data.positions || []);
+
+        // Si des positions actives, refresh rapide (3s)
+        if (data.positions && data.positions.length > 0) {
+            if (!liveInterval) {
+                liveInterval = setInterval(fetchLivePositions, 3000);
+            }
+        } else {
+            if (liveInterval) { clearInterval(liveInterval); liveInterval = null; }
+        }
+    } catch {
+        document.getElementById('positions-live').innerHTML = '';
+    }
+}
+
+function renderLivePositions(positions) {
+    const container = document.getElementById('positions-live');
+    if (!positions.length) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="positions-live-title"><span class="dot"></span> Positions ouvertes</div>
+        ${positions.map(p => {
+            const dec = getDecimals(p.entry_price);
+            const pnl = p.total_pnl || 0;
+            const pnlPct = p.pnl_pct || 0;
+            const pnlClass = pnl >= 0 ? 'up' : 'down';
+            const cardClass = pnl > 0 ? 'pos-profit' : pnl < 0 ? 'pos-loss' : '';
+            const sign = pnl >= 0 ? '+' : '';
+            const dir = p.direction === 'long' ? 'LONG' : 'SHORT';
+            const dirColor = p.direction === 'long' ? 'var(--green)' : 'var(--red)';
+
+            const stateClass = p.state === 'breakeven' ? 'pos-state-breakeven' :
+                               p.state === 'trailing' ? 'pos-state-trailing' : 'pos-state-active';
+            const stateLabel = p.state === 'breakeven' ? 'BE' :
+                               p.state === 'trailing' ? 'TRAIL' : 'ACTIF';
+
+            // Barre de progression entre SL et TP3
+            const sl = p.stop_loss;
+            const tp3 = p.tp3;
+            const cur = p.current_price || p.entry_price;
+            let progress = 0;
+            if (p.direction === 'long') {
+                progress = Math.max(0, Math.min(100, ((cur - sl) / (tp3 - sl)) * 100));
+            } else {
+                progress = Math.max(0, Math.min(100, ((sl - cur) / (sl - tp3)) * 100));
+            }
+            const barColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+            return `
+            <div class="pos-card ${cardClass}">
+                <div class="pos-header">
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <span class="pos-symbol">${p.symbol.split('/')[0]}</span>
+                        <span style="color:${dirColor};font-weight:700;font-size:13px">${dir}</span>
+                        <span class="pos-state ${stateClass}">${stateLabel}</span>
+                    </div>
+                    <div class="pos-pnl ${pnlClass}">${sign}${pnl.toFixed(2)}$ <span style="font-size:13px">(${sign}${pnlPct.toFixed(1)}%)</span></div>
+                </div>
+                <div class="pos-prices">
+                    <div class="pos-price-item">
+                        <div class="pos-price-label">Entree</div>
+                        <div class="pos-price-val">${p.entry_price.toFixed(dec)}</div>
+                    </div>
+                    <div class="pos-price-item">
+                        <div class="pos-price-label">Prix actuel</div>
+                        <div class="pos-price-val pos-current-price">${(p.current_price || 0).toFixed(dec)}</div>
+                    </div>
+                    <div class="pos-price-item">
+                        <div class="pos-price-label">Marge</div>
+                        <div class="pos-price-val">${(p.margin_required || 0).toFixed(2)}$</div>
+                    </div>
+                </div>
+                <div class="pos-bar"><div class="pos-bar-fill" style="width:${progress}%;background:${barColor}"></div></div>
+                <div class="pos-levels">
+                    <span class="pos-level pos-level-sl">SL ${p.stop_loss.toFixed(dec)}</span>
+                    <span class="pos-level pos-level-tp ${p.tp1_hit ? 'hit' : ''}">TP1 ${p.tp1.toFixed(dec)}</span>
+                    <span class="pos-level pos-level-tp ${p.tp2_hit ? 'hit' : ''}">TP2 ${p.tp2.toFixed(dec)}</span>
+                    <span class="pos-level pos-level-tp ${p.tp3_hit ? 'hit' : ''}">TP3 ${p.tp3.toFixed(dec)}</span>
+                </div>
+            </div>`;
+        }).join('')}
+    `;
+}
 
 // --- Paper Trading Reset ---
 async function resetPaper() {
