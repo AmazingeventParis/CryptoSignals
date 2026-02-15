@@ -124,10 +124,10 @@ function renderSignals(signals) {
         return;
     }
 
-    // Filtrer les signaux expires non-executes
+    // Filtrer : ne garder que les signaux encore jouables (< 20s et pas deja executes)
     signals = signals.filter(s => {
         const status = (s.status || '').toLowerCase();
-        if (['executed'].includes(status)) return true; // toujours montrer les executes
+        if (['executed', 'skipped', 'error'].includes(status)) return false;
         const ts = s.timestamp || s.created_at;
         const signalTime = new Date(ts.endsWith('Z') ? ts : ts + 'Z').getTime();
         const age = (Date.now() - signalTime) / 1000;
@@ -665,13 +665,6 @@ function disconnectMexcWs() {
 let pendingExec = null;
 
 async function openExecModal(signalId, orderType, margin) {
-    // Montant fixe (5$, 10$, 25$) -> execution directe sans modal
-    if (margin > 0) {
-        await execTrade(signalId, margin);
-        return;
-    }
-
-    // Montant custom -> ouvrir modal avec input
     const card = document.getElementById(`signal-card-${signalId}`);
     if (!card) return;
 
@@ -679,23 +672,55 @@ async function openExecModal(signalId, orderType, margin) {
     const direction = card.querySelector('.signal-direction')?.textContent || '?';
     const leverage = card.querySelector('.signal-body .value:last-child')?.textContent || '10x';
     const lev = parseInt(leverage) || 10;
+    const needsInput = margin === 0;
+
+    let paperBalance = 0;
+    try {
+        const pRes = await fetch(`${API}/api/paper/portfolio`);
+        const pData = await pRes.json();
+        paperBalance = (pData.current_balance || 0) - (pData.reserved_margin || 0);
+    } catch {}
 
     const title = document.getElementById('modal-title');
     const body = document.getElementById('modal-body');
     const confirmBtn = document.getElementById('modal-confirm');
 
     title.textContent = `PAPER ${direction} ${symbol}`;
+
+    let inputHtml = '';
+    if (needsInput) {
+        inputHtml = `<input type="number" id="modal-margin" placeholder="Montant en $ (ex: 15)" min="1" step="1" autofocus>`;
+    }
+
+    const displayMargin = needsInput ? '...' : `${margin}$`;
+    const displayPosition = needsInput ? '...' : `${margin * lev}$`;
+
     body.innerHTML = `
-        <input type="number" id="modal-margin" placeholder="Montant en $ (ex: 15)" min="1" step="1" autofocus>
+        <div style="background:rgba(88,166,255,0.12);border:1px solid rgba(88,166,255,0.3);border-radius:6px;padding:8px;margin-bottom:12px;font-size:12px;color:var(--blue);text-align:center;font-weight:600">Solde dispo: ${paperBalance.toFixed(2)}$</div>
+        <div class="row"><span class="lbl">Direction</span><span class="val" style="color:${direction==='LONG'?'var(--green)':'var(--red)'}">${direction}</span></div>
+        <div class="row"><span class="lbl">Levier</span><span class="val">${lev}x</span></div>
+        <div class="row"><span class="lbl">Marge</span><span class="val" id="modal-margin-display">${displayMargin}</span></div>
+        <div class="row"><span class="lbl">Position</span><span class="val" id="modal-position-display">${displayPosition}</span></div>
+        ${inputHtml}
     `;
 
-    confirmBtn.textContent = 'GO';
+    confirmBtn.textContent = 'Confirmer';
     confirmBtn.className = 'btn-exec';
     confirmBtn.disabled = false;
+    confirmBtn.style.background = '';
 
-    pendingExec = { signal_id: signalId, lev: lev };
+    pendingExec = { signal_id: signalId, order_type: 'market', margin: margin, lev: lev };
     document.getElementById('exec-modal').style.display = 'flex';
-    document.getElementById('modal-margin')?.focus();
+
+    if (needsInput) {
+        const input = document.getElementById('modal-margin');
+        input.focus();
+        input.addEventListener('input', () => {
+            const val = parseFloat(input.value) || 0;
+            document.getElementById('modal-margin-display').textContent = val > 0 ? `${val}$` : '...';
+            document.getElementById('modal-position-display').textContent = val > 0 ? `${val * lev}$` : '...';
+        });
+    }
 }
 
 function closeModal() {
@@ -705,30 +730,49 @@ function closeModal() {
 
 async function confirmExec() {
     if (!pendingExec) return;
-    const input = document.getElementById('modal-margin');
-    const margin = parseFloat(input?.value) || 0;
-    if (margin <= 0) { input.style.borderColor = 'var(--red)'; return; }
-    closeModal();
-    await execTrade(pendingExec.signal_id, margin);
-}
 
-async function execTrade(signalId, margin) {
-    // Desactiver le bouton clique pour eviter double-clic
-    const card = document.getElementById(`signal-card-${signalId}`);
-    if (card) card.querySelectorAll('.btn-amount, .btn-custom').forEach(b => { b.disabled = true; b.style.opacity = '0.4'; });
+    let margin = pendingExec.margin;
+    if (margin === 0) {
+        const input = document.getElementById('modal-margin');
+        if (input) margin = parseFloat(input.value) || 0;
+        if (margin <= 0) { input.style.borderColor = 'var(--red)'; return; }
+    }
+
+    const confirmBtn = document.getElementById('modal-confirm');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Execution...';
 
     try {
-        const res = await fetch(`${API}/api/execute/${signalId}`, {
+        const res = await fetch(`${API}/api/execute/${pendingExec.signal_id}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ margin: margin, order_type: 'market' }),
+            body: JSON.stringify({ margin: margin, order_type: pendingExec.order_type }),
         });
         const result = await res.json();
-        if (!result.success && card) {
-            card.querySelectorAll('.btn-amount, .btn-custom').forEach(b => { b.disabled = false; b.style.opacity = ''; });
+
+        if (result.success) {
+            closeModal();
+            refreshAll();
+        } else {
+            confirmBtn.textContent = result.error || 'Erreur';
+            confirmBtn.style.background = 'var(--red)';
+            confirmBtn.style.color = '#fff';
+            setTimeout(() => {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Confirmer';
+                confirmBtn.style.background = '';
+                confirmBtn.style.color = '';
+            }, 2000);
         }
-    } catch {}
-    refreshAll();
+    } catch (e) {
+        confirmBtn.textContent = 'Erreur reseau';
+        confirmBtn.style.background = 'var(--red)';
+        setTimeout(() => {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Confirmer';
+            confirmBtn.style.background = '';
+        }, 2000);
+    }
 }
 
 // Fermer modal avec Escape
