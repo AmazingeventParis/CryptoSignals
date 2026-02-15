@@ -20,7 +20,7 @@ from app.services.telegram_bot import send_trade_update
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL = 8
+POLL_INTERVAL = 3
 QTY_TOLERANCE_PCT = 5
 
 
