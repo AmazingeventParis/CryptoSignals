@@ -17,6 +17,12 @@ pairs:
     enabled: true
   - symbol: "KAITO/USDT:USDT"
     enabled: true
+  - symbol: "BTC/USDT:USDT"
+    enabled: true
+  - symbol: "VIRTUAL/USDT:USDT"
+    enabled: true
+  - symbol: "TRUMP/USDT:USDT"
+    enabled: true
 
 # --- Scanner ---
 scanner:
