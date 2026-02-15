@@ -97,6 +97,17 @@ class Scanner:
                             f"score={result['score']} entry={result['entry_price']}"
                         )
 
+                        # AUTO-EXECUTE en paper trading
+                        try:
+                            from app.core.paper_trader import paper_trader
+                            executed = await paper_trader.auto_execute(result)
+                            if executed:
+                                from app.database import update_signal_status
+                                await update_signal_status(signal_id, "executed")
+                                logger.info(f"AUTO-TRADE: {result['direction'].upper()} {symbol} execute")
+                        except Exception as e:
+                            logger.error(f"Erreur auto-execute: {e}")
+
                     else:
                         # Log tradeability
                         await log_tradeability(
