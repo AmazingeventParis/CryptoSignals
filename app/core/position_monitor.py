@@ -20,7 +20,12 @@ from app.database import (
     insert_trade,
     insert_active_position,
 )
-from app.services.telegram_bot import send_trade_update
+# from app.services.telegram_bot import send_trade_update  # DISABLED
+
+
+async def send_trade_update(*args, **kwargs):
+    """Stub - Telegram disabled"""
+    pass
 
 logger = logging.getLogger(__name__)
 

@@ -55,16 +55,15 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("MEXC non connecte - dashboard seul, le scanner retentera la connexion")
 
-    try:
-        await send_startup_message()
-    except Exception as e:
-        logger.warning(f"Telegram startup message echoue: {e}")
-
-    # Enregistrer le webhook Telegram pour les boutons
-    try:
-        await register_webhook("https://crypto.swipego.app/telegram/webhook")
-    except Exception as e:
-        logger.warning(f"Telegram webhook registration echoue: {e}")
+    # Telegram disabled
+    # try:
+    #     await send_startup_message()
+    # except Exception as e:
+    #     logger.warning(f"Telegram startup message echoue: {e}")
+    # try:
+    #     await register_webhook("https://crypto.swipego.app/telegram/webhook")
+    # except Exception as e:
+    #     logger.warning(f"Telegram webhook registration echoue: {e}")
 
     # Demarrer le paper trader (portefeuille fictif)
     await paper_trader.start()

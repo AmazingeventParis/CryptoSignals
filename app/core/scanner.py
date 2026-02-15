@@ -8,7 +8,7 @@ from app.config import SETTINGS, get_enabled_pairs, get_mode_config
 from app.core.market_data import market_data
 from app.core.signal_engine import analyze_pair
 from app.database import insert_signal, log_tradeability
-from app.services.telegram_bot import send_signal, send_no_trade_summary
+# from app.services.telegram_bot import send_signal, send_no_trade_summary  # DISABLED
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +90,8 @@ class Scanner:
                         self.last_signals[key] = result
                         self._signal_timestamps[symbol] = datetime.utcnow()
 
-                        # Envoyer sur Telegram
-                        await send_signal(result)
+                        # Envoyer sur Telegram (DISABLED)
+                        # await send_signal(result)
                         logger.info(
                             f"SIGNAL {result['direction'].upper()} {symbol} [{mode}] "
                             f"score={result['score']} entry={result['entry_price']}"
