@@ -190,6 +190,86 @@ body {
     touch-action: none;
 }
 
+/* Execution buttons on signal cards */
+.signal-actions {
+    display: flex; gap: 6px; margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--border); flex-wrap: wrap; align-items: center;
+}
+.btn-amount {
+    background: rgba(63,185,80,0.12); border: 1px solid rgba(63,185,80,0.3);
+    color: var(--green); padding: 6px 14px; border-radius: 6px;
+    cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.15s;
+}
+.btn-amount:hover { background: rgba(63,185,80,0.25); border-color: var(--green); }
+.btn-limit {
+    background: rgba(88,166,255,0.12); border: 1px solid rgba(88,166,255,0.3);
+    color: var(--blue); padding: 6px 12px; border-radius: 6px;
+    cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.15s;
+}
+.btn-limit:hover { background: rgba(88,166,255,0.25); border-color: var(--blue); }
+.btn-custom {
+    background: rgba(188,140,255,0.12); border: 1px solid rgba(188,140,255,0.3);
+    color: var(--purple); padding: 6px 10px; border-radius: 6px;
+    cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.15s;
+}
+.btn-custom:hover { background: rgba(188,140,255,0.25); border-color: var(--purple); }
+.signal-status {
+    font-size: 11px; padding: 3px 8px; border-radius: 4px; font-weight: 600;
+    margin-left: auto;
+}
+.status-executed { background: rgba(63,185,80,0.15); color: var(--green); }
+.status-skipped { background: rgba(139,148,158,0.15); color: var(--text-secondary); }
+.status-error { background: rgba(248,81,73,0.15); color: var(--red); }
+
+/* Modal */
+.modal-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7); z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+}
+.modal {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 12px; width: 100%; max-width: 400px;
+    overflow: hidden;
+}
+.modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px; border-bottom: 1px solid var(--border);
+    font-weight: 700; font-size: 16px;
+}
+.modal-body { padding: 16px; }
+.modal-body .row {
+    display: flex; justify-content: space-between; padding: 6px 0;
+    font-size: 13px;
+}
+.modal-body .row .lbl { color: var(--text-secondary); }
+.modal-body .row .val { font-family: monospace; font-weight: 600; }
+.modal-body input {
+    width: 100%; padding: 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--bg); color: var(--text);
+    font-size: 14px; margin-top: 8px;
+}
+.modal-body input:focus { outline: none; border-color: var(--blue); }
+.modal-actions {
+    display: flex; gap: 8px; padding: 16px;
+    border-top: 1px solid var(--border);
+}
+.btn-cancel {
+    flex: 1; padding: 10px; border: 1px solid var(--border);
+    background: none; color: var(--text-secondary); border-radius: 8px;
+    cursor: pointer; font-size: 14px; font-weight: 600;
+}
+.btn-cancel:hover { background: var(--bg); }
+.btn-exec {
+    flex: 2; padding: 10px; border: none;
+    background: var(--green); color: #000; border-radius: 8px;
+    cursor: pointer; font-size: 14px; font-weight: 700;
+}
+.btn-exec:hover { opacity: 0.9; }
+.btn-exec:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-exec.limit { background: var(--blue); }
+
 /* Responsive */
 @media (max-width: 480px) {
     .stats-row { grid-template-columns: repeat(2, 1fr); }

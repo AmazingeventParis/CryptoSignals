@@ -132,8 +132,31 @@ function renderSignals(signals) {
             reasons = arr.map(r => `<div style="font-size:11px;color:var(--text-secondary)">• ${r}</div>`).join('');
         } catch {}
 
+        // Boutons d'execution (seulement si pas deja execute)
+        const status = (s.status || '').toLowerCase();
+        const canExec = !['executed', 'skipped', 'error'].includes(status) && s.direction !== 'none';
+        let actionsHtml = '';
+        if (canExec && s.id) {
+            const sid = s.id;
+            actionsHtml = `
+            <div class="signal-actions">
+                <button class="btn-amount" onclick="openExecModal(${sid},'market',5)">5$</button>
+                <button class="btn-amount" onclick="openExecModal(${sid},'market',10)">10$</button>
+                <button class="btn-amount" onclick="openExecModal(${sid},'market',25)">25$</button>
+                <button class="btn-amount" onclick="openExecModal(${sid},'market',50)">50$</button>
+                <button class="btn-custom" onclick="openExecModal(${sid},'market',0)">...$</button>
+                <button class="btn-limit" onclick="openExecModal(${sid},'limit',0)">LIMIT</button>
+            </div>`;
+        } else if (status === 'executed') {
+            actionsHtml = '<div class="signal-actions"><span class="signal-status status-executed">&#x2705; Execute</span></div>';
+        } else if (status === 'skipped') {
+            actionsHtml = '<div class="signal-actions"><span class="signal-status status-skipped">Ignore</span></div>';
+        } else if (status === 'error') {
+            actionsHtml = '<div class="signal-actions"><span class="signal-status status-error">Erreur</span></div>';
+        }
+
         return `
-        <div class="signal-card">
+        <div class="signal-card" id="signal-card-${s.id || 0}">
             <div class="signal-header">
                 <div style="display:flex;align-items:center;gap:8px">
                     <span class="signal-pair">${s.symbol}</span>
@@ -158,6 +181,7 @@ function renderSignals(signals) {
                 <div class="score-bar"><div class="score-fill ${scoreClass}" style="width:${s.score}%"></div></div>
                 <span style="font-size:12px">/100</span>
             </div>
+            ${actionsHtml}
         </div>`;
     }).join('');
 }
@@ -604,5 +628,130 @@ function disconnectMexcWs() {
         mexcWs = null;
     }
 }
+
+// --- Execution depuis le dashboard ---
+let pendingExec = null;  // { signal_id, order_type, margin }
+
+function openExecModal(signalId, orderType, margin) {
+    // Trouver les donnees du signal dans le DOM
+    const card = document.getElementById(`signal-card-${signalId}`);
+    if (!card) return;
+
+    const symbol = card.querySelector('.signal-pair')?.textContent || '?';
+    const direction = card.querySelector('.signal-direction')?.textContent || '?';
+    const leverage = card.querySelector('.signal-body .value:last-child')?.textContent || '10x';
+    const lev = parseInt(leverage) || 10;
+    const isLimit = orderType === 'limit';
+    const needsInput = margin === 0;
+
+    const title = document.getElementById('modal-title');
+    const body = document.getElementById('modal-body');
+    const confirmBtn = document.getElementById('modal-confirm');
+
+    title.textContent = isLimit ? `LIMIT ${direction} ${symbol}` : `MARKET ${direction} ${symbol}`;
+
+    let inputHtml = '';
+    if (needsInput) {
+        inputHtml = `<input type="number" id="modal-margin" placeholder="Montant en $ (ex: 15)" min="1" step="1" autofocus>`;
+    }
+
+    const displayMargin = needsInput ? '...' : `${margin}$`;
+    const displayPosition = needsInput ? '...' : `${margin * lev}$`;
+
+    body.innerHTML = `
+        <div class="row"><span class="lbl">Direction</span><span class="val" style="color:${direction==='LONG'?'var(--green)':'var(--red)'}">${direction}</span></div>
+        <div class="row"><span class="lbl">Type</span><span class="val">${isLimit ? 'LIMIT' : 'MARKET'}</span></div>
+        <div class="row"><span class="lbl">Levier</span><span class="val">${lev}x</span></div>
+        <div class="row"><span class="lbl">Marge</span><span class="val" id="modal-margin-display">${displayMargin}</span></div>
+        <div class="row"><span class="lbl">Position</span><span class="val" id="modal-position-display">${displayPosition}</span></div>
+        ${inputHtml}
+    `;
+
+    confirmBtn.textContent = isLimit ? 'Placer LIMIT' : 'Executer MARKET';
+    confirmBtn.className = isLimit ? 'btn-exec limit' : 'btn-exec';
+    confirmBtn.disabled = false;
+
+    pendingExec = { signal_id: signalId, order_type: orderType, margin: margin, lev: lev };
+
+    document.getElementById('exec-modal').style.display = 'flex';
+
+    // Si input present, mettre a jour en temps reel
+    if (needsInput) {
+        const input = document.getElementById('modal-margin');
+        input.focus();
+        input.addEventListener('input', () => {
+            const val = parseFloat(input.value) || 0;
+            document.getElementById('modal-margin-display').textContent = val > 0 ? `${val}$` : '...';
+            document.getElementById('modal-position-display').textContent = val > 0 ? `${val * lev}$` : '...';
+        });
+    }
+}
+
+function closeModal() {
+    document.getElementById('exec-modal').style.display = 'none';
+    pendingExec = null;
+}
+
+async function confirmExec() {
+    if (!pendingExec) return;
+
+    let margin = pendingExec.margin;
+    if (margin === 0) {
+        const input = document.getElementById('modal-margin');
+        if (input) margin = parseFloat(input.value) || 0;
+        if (margin <= 0) {
+            input.style.borderColor = 'var(--red)';
+            return;
+        }
+    }
+
+    const confirmBtn = document.getElementById('modal-confirm');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Execution...';
+
+    try {
+        const res = await fetch(`${API}/api/execute/${pendingExec.signal_id}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                margin: margin,
+                order_type: pendingExec.order_type,
+            }),
+        });
+        const result = await res.json();
+
+        if (result.success) {
+            confirmBtn.textContent = 'OK !';
+            confirmBtn.style.background = 'var(--green)';
+            setTimeout(() => {
+                closeModal();
+                refreshAll();
+            }, 1000);
+        } else {
+            confirmBtn.textContent = result.error || 'Erreur';
+            confirmBtn.style.background = 'var(--red)';
+            confirmBtn.style.color = '#fff';
+            setTimeout(() => {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = pendingExec.order_type === 'limit' ? 'Placer LIMIT' : 'Executer MARKET';
+                confirmBtn.style.background = '';
+                confirmBtn.style.color = '';
+            }, 3000);
+        }
+    } catch (e) {
+        confirmBtn.textContent = 'Erreur reseau';
+        confirmBtn.style.background = 'var(--red)';
+        setTimeout(() => {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Reessayer';
+            confirmBtn.style.background = '';
+        }, 2000);
+    }
+}
+
+// Fermer modal avec Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeModal();
+});
 
 // PWA desactive - pas de Service Worker (evite les problemes de cache)

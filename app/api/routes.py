@@ -131,6 +131,58 @@ async def debug_pair(symbol: str, mode: str = Query("scalping")):
     return result
 
 
+@router.post("/execute/{signal_id}")
+async def execute_from_web(signal_id: int, body: dict = {}):
+    """Execute un signal depuis le dashboard web."""
+    from app.database import get_signal_by_id, update_signal_status
+    from app.core.order_executor import execute_signal
+    from app.services.telegram_bot import send_execution_result
+    import json as _json
+
+    margin_usdt = body.get("margin", 10)
+    order_type = body.get("order_type", "market")
+
+    signal_db = await get_signal_by_id(signal_id)
+    if not signal_db:
+        return {"success": False, "error": "Signal introuvable"}
+
+    if signal_db.get("status") == "executed":
+        return {"success": False, "error": "Deja execute"}
+
+    signal_data = {
+        **signal_db,
+        "reasons": _json.loads(signal_db.get("reasons", "[]")) if isinstance(signal_db.get("reasons"), str) else signal_db.get("reasons", []),
+    }
+
+    is_test = signal_db.get("status") == "test"
+    lev = signal_data.get("leverage", 10)
+
+    if is_test:
+        position_usd = margin_usdt * lev
+        fake_result = {
+            "success": True,
+            "order_type": order_type,
+            "entry_order_id": "TEST",
+            "actual_entry_price": signal_data["entry_price"],
+            "sl_order_id": "TEST",
+            "tp_order_ids": ["TEST", "TEST", "TEST"],
+            "quantity": round(position_usd / signal_data["entry_price"], 6),
+            "position_size_usd": position_usd,
+            "margin_required": margin_usdt,
+            "balance": 100.0,
+        }
+        await send_execution_result(signal_data, fake_result)
+        return {**fake_result, "is_test": True}
+
+    result = await execute_signal(signal_data, margin_usdt=margin_usdt, order_type=order_type)
+
+    new_status = "executed" if result["success"] else "error"
+    await update_signal_status(signal_id, new_status)
+
+    await send_execution_result(signal_data, result)
+    return result
+
+
 @router.get("/sentiment")
 async def get_sentiment():
     """Retourne le sentiment actuel du marche."""
