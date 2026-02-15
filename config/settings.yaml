@@ -38,6 +38,8 @@ scalping:
       - breakout
       - retest
       - ema_bounce
+      - momentum
+      - divergence
     confirmation_candles: 1
 
   stop_loss:
@@ -86,6 +88,7 @@ swing:
       - retest
       - divergence
       - ema_bounce
+      - momentum
     confirmation_candles: 2
 
   stop_loss:

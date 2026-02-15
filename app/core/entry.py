@@ -280,6 +280,61 @@ def calculate_rr_score(entry: float, stop: float, tp1: float) -> int:
         return 0
 
 
+def detect_momentum(indicators: dict, direction_bias: str) -> dict | None:
+    """Detecte un momentum fort (tendance claire sans bounce ni retest)."""
+    price = indicators.get("last_close", 0)
+    rsi = indicators.get("last_rsi", 50)
+    adx = indicators.get("last_adx", 0)
+    di_plus = indicators.get("last_di_plus", 0)
+    di_minus = indicators.get("last_di_minus", 0)
+    ema20 = indicators.get("ema20", 0)
+    ema50 = indicators.get("ema50", 0)
+    macd_hist = indicators.get("last_macd_histogram", 0)
+
+    if not price or adx < 20:
+        return None
+
+    # SHORT momentum: RSI < 35, DI- > DI+, prix sous EMA20 et EMA50
+    if direction_bias in ("short", "neutral"):
+        if rsi < 35 and di_minus > di_plus and price < ema20 and price < ema50:
+            score = 15
+            if rsi < 25:
+                score += 5
+            if adx > 40:
+                score += 5
+            if macd_hist < 0:
+                score += 5
+            return {
+                "type": "momentum",
+                "direction": "short",
+                "entry_price": price,
+                "pattern_score": score,
+                "vol_score": 5,
+                "reason": f"Momentum baissier fort (RSI {rsi:.1f}, ADX {adx:.1f})",
+            }
+
+    # LONG momentum: RSI > 65, DI+ > DI-, prix au-dessus EMA20 et EMA50
+    if direction_bias in ("long", "neutral"):
+        if rsi > 65 and di_plus > di_minus and price > ema20 and price > ema50:
+            score = 15
+            if rsi > 75:
+                score += 5
+            if adx > 40:
+                score += 5
+            if macd_hist > 0:
+                score += 5
+            return {
+                "type": "momentum",
+                "direction": "long",
+                "entry_price": price,
+                "pattern_score": score,
+                "vol_score": 5,
+                "reason": f"Momentum haussier fort (RSI {rsi:.1f}, ADX {adx:.1f})",
+            }
+
+    return None
+
+
 def calculate_confluence(setups: list[dict]) -> int:
     if len(setups) >= 3:
         return 25
@@ -315,6 +370,11 @@ def find_best_entry(
 
     if "ema_bounce" in allowed_setups:
         s = detect_ema_bounce(indicators, direction_bias)
+        if s:
+            setups.append(s)
+
+    if "momentum" in allowed_setups:
+        s = detect_momentum(indicators, direction_bias)
         if s:
             setups.append(s)
 
