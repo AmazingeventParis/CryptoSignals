@@ -306,6 +306,40 @@ async def _do_execute(
     lev = signal_data.get("leverage", 10)
     position_usd = margin_usdt * lev
     label = "MARKET (immediat)" if order_type == "market" else f"LIMIT @ {signal_data['entry_price']}"
+
+    # Verifier si c'est un signal de test
+    signal_db = await get_signal_by_id(signal_id)
+    is_test = signal_db and signal_db.get("status") == "test"
+
+    if is_test:
+        # SIMULATION : ne rien executer, juste montrer le resultat
+        await send_message(
+            f"\u23f3 <b>SIMULATION en cours...</b>\n"
+            f"Type: {label}\n"
+            f"Marge: {margin_usdt}$ | Position: {position_usd}$ | Levier: {lev}x"
+        )
+        # Faux resultat
+        fake_result = {
+            "success": True,
+            "order_type": order_type,
+            "entry_order_id": "TEST-000",
+            "actual_entry_price": signal_data["entry_price"],
+            "sl_order_id": "TEST-SL",
+            "tp_order_ids": ["TEST-TP1", "TEST-TP2", "TEST-TP3"],
+            "quantity": round(position_usd / signal_data["entry_price"], 6),
+            "position_size_usd": position_usd,
+            "margin_required": margin_usdt,
+            "balance": 100.0,
+        }
+        await send_execution_result(signal_data, fake_result)
+        await send_message(
+            "\U0001f9ea <b>CECI ETAIT UNE SIMULATION</b>\n"
+            "Aucun ordre n'a ete place sur MEXC."
+        )
+        logger.info(f"Signal TEST {signal_id} simule ({order_type}, {margin_usdt}$)")
+        return
+
+    # EXECUTION REELLE
     await send_message(
         f"\u23f3 <b>Execution en cours...</b>\n"
         f"Type: {label}\n"
