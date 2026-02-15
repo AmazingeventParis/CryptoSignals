@@ -996,7 +996,7 @@ function renderLivePositions(positions) {
                     </div>
                     <div class="pos-price-item">
                         <div class="pos-price-label">Prix actuel</div>
-                        <div class="pos-price-val pos-current-price">${(p.current_price || 0).toFixed(dec)}</div>
+                        <div class="pos-price-val" style="color:${pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${(p.current_price || 0).toFixed(dec)}</div>
                     </div>
                     <div class="pos-price-item">
                         <div class="pos-price-label">Marge</div>
