@@ -999,8 +999,8 @@ function renderLivePositions(positions) {
                         <div class="pos-price-val" style="color:${pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${(p.current_price || 0).toFixed(dec)}</div>
                     </div>
                     <div class="pos-price-item">
-                        <div class="pos-price-label">Marge</div>
-                        <div class="pos-price-val">${(p.margin_required || 0).toFixed(2)}$</div>
+                        <div class="pos-price-label">Marge x${p.leverage || '?'}</div>
+                        <div class="pos-price-val">${(p.margin_required || 0).toFixed(0)}$ → ${(p.position_size_usd || 0).toFixed(0)}$</div>
                     </div>
                 </div>
                 <div class="pos-bar"><div class="pos-bar-fill" style="width:${progress}%;background:${barColor}"></div></div>
