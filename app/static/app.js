@@ -834,10 +834,12 @@ function connectPosMexcWs() {
         try {
             const msg = JSON.parse(evt.data);
             if (msg.channel === 'push.deal' && msg.data) {
-                const price = parseFloat(msg.data.p);
+                // msg.data est un tableau de trades
+                const deals = Array.isArray(msg.data) ? msg.data : [msg.data];
+                const lastDeal = deals[deals.length - 1];
+                const price = parseFloat(lastDeal.p);
                 const mexcSym = msg.symbol || '';
                 if (price > 0) {
-                    // Retrouver le symbol original
                     mexcSymbols.forEach((ms, s) => {
                         if (ms === mexcSym) livePrices[s] = price;
                     });
