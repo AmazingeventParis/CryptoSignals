@@ -23,13 +23,16 @@ def check_volatility(atr_current: float, atr_mean: float) -> tuple[float, str]:
         return 0.0, f"Volatilite trop basse (ATR ratio {ratio:.2f} < {min_r})"
     elif ratio > max_r:
         return 0.0, f"Volatilite trop haute (ATR ratio {ratio:.2f} > {max_r})"
+    elif 0.8 <= ratio <= 2.0:
+        # Zone optimale : volatilite normale a moderee
+        return 1.0, f"ATR ratio {ratio:.2f} OK"
+    elif ratio < 0.8:
+        # Entre min_r (0.5) et 0.8 : montee lineaire
+        score = (ratio - min_r) / (0.8 - min_r)
+        return max(0.0, min(1.0, score)), f"ATR ratio {ratio:.2f} OK"
     else:
-        # Score lineaire entre min et max, optimal au milieu
-        mid = (min_r + max_r) / 2
-        if ratio <= mid:
-            score = (ratio - min_r) / (mid - min_r)
-        else:
-            score = 1.0 - (ratio - mid) / (max_r - mid)
+        # Entre 2.0 et max_r (3.0) : descente lineaire
+        score = 1.0 - (ratio - 2.0) / (max_r - 2.0)
         return max(0.0, min(1.0, score)), f"ATR ratio {ratio:.2f} OK"
 
 
