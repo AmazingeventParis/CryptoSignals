@@ -141,7 +141,12 @@ class PositionMonitor:
                                 break
                             msg = json.loads(raw)
                             if msg.get("channel") == "push.deal" and msg.get("data"):
-                                price = float(msg["data"].get("p", 0))
+                                deals = msg["data"]
+                                if isinstance(deals, list):
+                                    last_deal = deals[-1] if deals else {}
+                                else:
+                                    last_deal = deals
+                                price = float(last_deal.get("p", 0))
                                 if price > 0:
                                     await self._on_price_tick(symbol, price)
                     finally:

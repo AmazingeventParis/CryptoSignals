@@ -414,7 +414,9 @@ async def positions_ws(websocket: WebSocket):
 
                         msg = json.loads(raw)
                         if msg.get("channel") == "push.deal" and msg.get("data"):
-                            price = float(msg["data"].get("p", 0))
+                            deals = msg["data"]
+                            last_deal = deals[-1] if isinstance(deals, list) and deals else deals if isinstance(deals, dict) else {}
+                            price = float(last_deal.get("p", 0))
                             sym_key = msg.get("symbol", "")
                             if price > 0:
                                 # Trouver le symbol original
