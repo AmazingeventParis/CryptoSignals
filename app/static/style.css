@@ -322,7 +322,14 @@ body {
 }
 .pos-level-sl { background: rgba(248,81,73,0.15); color: var(--red); }
 .pos-level-tp { background: rgba(63,185,80,0.15); color: var(--green); }
-.pos-level-tp.hit { opacity: 0.4; text-decoration: line-through; }
+.pos-level-tp.hit {
+    background: var(--green); color: #000; font-weight: 800;
+    animation: tp-blink 1s ease-in-out infinite;
+}
+@keyframes tp-blink {
+    0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--green); }
+    50% { opacity: 0.5; box-shadow: none; }
+}
 .pos-bar {
     height: 4px; background: var(--border); border-radius: 2px;
     margin-top: 8px; overflow: hidden; position: relative;
