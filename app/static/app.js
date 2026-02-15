@@ -124,6 +124,21 @@ function renderSignals(signals) {
         return;
     }
 
+    // Filtrer les signaux expires non-executes
+    signals = signals.filter(s => {
+        const status = (s.status || '').toLowerCase();
+        if (['executed'].includes(status)) return true; // toujours montrer les executes
+        const ts = s.timestamp || s.created_at;
+        const signalTime = new Date(ts.endsWith('Z') ? ts : ts + 'Z').getTime();
+        const age = (Date.now() - signalTime) / 1000;
+        return age <= 20;
+    });
+
+    if (!signals.length) {
+        container.innerHTML = '<div class="empty-state">Aucun signal pour le moment. Le scanner tourne...</div>';
+        return;
+    }
+
     container.innerHTML = signals.map(s => {
         const dirClass = s.direction === 'long' ? 'signal-long' :
                          s.direction === 'short' ? 'signal-short' : 'signal-notrade';
