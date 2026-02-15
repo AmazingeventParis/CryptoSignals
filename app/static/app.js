@@ -1009,7 +1009,7 @@ function renderLivePositions(positions) {
                     <span class="pos-level pos-level-tp ${p.tp1_hit ? 'hit' : ''}">TP1 ${p.tp1.toFixed(dec)}</span>
                     <span class="pos-level pos-level-tp ${p.tp2_hit ? 'hit' : ''}">TP2 ${p.tp2.toFixed(dec)}</span>
                     <span class="pos-level pos-level-tp ${p.tp3_hit ? 'hit' : ''}">TP3 ${p.tp3.toFixed(dec)}</span>
-                    <button class="pos-close-btn" onclick="closePosition(${p.id})">FERMER</button>
+                    <button class="pos-close-btn" onclick="closePosition(${p.id}, this)">FERMER</button>
                 </div>
             </div>`;
         }).join('')}
@@ -1017,16 +1017,23 @@ function renderLivePositions(positions) {
 }
 
 // --- Fermer position manuellement ---
-async function closePosition(posId) {
+async function closePosition(posId, btn) {
+    // Feedback instantane
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    // Envoyer le prix live du WS pour eviter un appel MEXC lent
+    const pos = positionsData.find(p => p.id === posId);
+    const livePrice = pos ? (livePrices[pos.symbol] || 0) : 0;
     try {
-        const res = await fetch(`${API}/api/positions/${posId}/close`, { method: 'POST' });
-        const data = await res.json();
-        if (data.success) {
-            refreshAll();
-        }
+        const res = await fetch(`${API}/api/positions/${posId}/close`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ price: livePrice }),
+        });
+        await res.json();
     } catch (e) {
         console.error('Erreur close position:', e);
     }
+    refreshAll();
 }
 
 // --- Paper Trading Reset ---

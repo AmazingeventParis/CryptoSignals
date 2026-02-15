@@ -290,7 +290,7 @@ async def paper_reset():
 
 
 @router.post("/positions/{position_id}/close")
-async def close_position_manual(position_id: int):
+async def close_position_manual(position_id: int, body: dict = {}):
     """Ferme manuellement une position au prix actuel."""
     from app.database import get_active_positions, close_position, insert_trade, update_paper_balance
     from app.core.paper_trader import paper_trader
@@ -303,12 +303,14 @@ async def close_position_manual(position_id: int):
     if not pos:
         return {"success": False, "error": "Position introuvable ou deja fermee"}
 
-    # Recuperer le prix actuel
-    try:
-        ticker = await market_data.fetch_ticker(pos["symbol"])
-        current_price = ticker.get("price", 0)
-    except Exception:
-        current_price = 0
+    # Utiliser le prix envoye par le frontend (WS live) sinon fetcher
+    current_price = body.get("price", 0)
+    if not current_price or current_price <= 0:
+        try:
+            ticker = await market_data.fetch_ticker(pos["symbol"])
+            current_price = ticker.get("price", 0)
+        except Exception:
+            current_price = 0
 
     if current_price <= 0:
         return {"success": False, "error": "Impossible de recuperer le prix actuel"}
