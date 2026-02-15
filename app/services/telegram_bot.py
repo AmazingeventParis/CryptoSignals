@@ -154,12 +154,26 @@ async def send_execution_result(signal: dict, result: dict):
     if result["success"]:
         entry = result['actual_entry_price']
         decimals = _get_decimals(float(entry)) if entry else 4
+        is_limit = result.get("order_type") == "limit"
 
-        text = f"""\U0001f680 <b>ORDRE EXECUTE !</b>
+        if is_limit:
+            header = "\U0001f4cb <b>ORDRE LIMIT PLACE !</b>"
+            entry_label = "Prix limite"
+            footer = (
+                "\u23f3 <i>L'ordre attend que le prix atteigne "
+                f"<code>{entry:.{decimals}f}</code>.\n"
+                "SL et TPs s'activeront apres le fill.\n"
+                "Va sur MEXC pour voir l'ordre en attente.</i>"
+            )
+        else:
+            header = "\U0001f680 <b>ORDRE MARKET EXECUTE !</b>"
+            entry_label = "Entree reelle"
+            footer = "\u26a0\ufe0f <i>SL et TPs sont actifs. Va sur MEXC pour verifier.</i>"
+
+        text = f"""{header}
 
 \U0001f4b9 {signal['symbol']} {signal['direction'].upper()}
-\U0001f4b0 Entree reelle : <code>{entry}</code>
-\U0001f4b0 Signal etait  : <code>{signal.get('entry_price', 'N/A')}</code>
+\U0001f4b0 {entry_label} : <code>{entry:.{decimals}f}</code>
 \U0001f4e6 Quantite : {result['quantity']}
 \U0001f4b5 Position : {result['position_size_usd']}$
 \U0001f512 Marge : {result['margin_required']}$
@@ -169,7 +183,7 @@ async def send_execution_result(signal: dict, result: dict):
 
 \U0001f3e6 Balance restante : {result['balance']:.2f} USDT
 
-\u26a0\ufe0f <i>SL et TPs sont actifs. Va sur MEXC pour verifier.</i>"""
+{footer}"""
     else:
         text = f"""\u274c <b>EXECUTION REFUSEE</b>
 

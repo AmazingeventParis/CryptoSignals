@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 MAX_PRICE_DEVIATION_PCT = 0.3
 
 
-async def execute_signal(signal: dict, margin_usdt: float = None) -> dict:
+async def execute_signal(signal: dict, margin_usdt: float = None, order_type: str = "market") -> dict:
     """
     Execute un signal sur MEXC Futures.
-    0. Verifie que le prix actuel n'a pas trop devie du signal
+    0. Verifie le prix actuel
     1. Set leverage + margin mode
     2. Calcule la taille de position depuis la marge choisie
-    3. Place l'ordre market (entree)
+    3. Place l'ordre (market = immediat, limit = en attente)
     4. Place SL (stop market)
     5. Place TP1, TP2, TP3 (take profit market)
     """
@@ -45,42 +45,48 @@ async def execute_signal(signal: dict, margin_usdt: float = None) -> dict:
         if current_price <= 0:
             return {"success": False, "error": "Prix actuel indisponible"}
 
-        deviation_pct = abs(current_price - signal_entry) / signal_entry * 100
-        if deviation_pct > MAX_PRICE_DEVIATION_PCT:
-            return {
-                "success": False,
-                "error": (
-                    f"Prix a trop bouge ! Signal: {signal_entry}, "
-                    f"Actuel: {current_price} (deviation {deviation_pct:.2f}% > {MAX_PRICE_DEVIATION_PCT}%)"
-                ),
-            }
+        if order_type == "market":
+            # MARKET : verifier que le prix n'a pas trop devie
+            deviation_pct = abs(current_price - signal_entry) / signal_entry * 100
+            if deviation_pct > MAX_PRICE_DEVIATION_PCT:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Prix a trop bouge ! Signal: {signal_entry}, "
+                        f"Actuel: {current_price} (deviation {deviation_pct:.2f}% > {MAX_PRICE_DEVIATION_PCT}%)"
+                    ),
+                }
 
-        # Verifier que le prix va dans le bon sens (pas deja au-dela du SL)
-        if direction == "long" and current_price <= stop_loss:
-            return {"success": False, "error": f"Prix ({current_price}) deja sous le SL ({stop_loss})"}
-        if direction == "short" and current_price >= stop_loss:
-            return {"success": False, "error": f"Prix ({current_price}) deja au-dessus du SL ({stop_loss})"}
+            if direction == "long" and current_price <= stop_loss:
+                return {"success": False, "error": f"Prix ({current_price}) deja sous le SL ({stop_loss})"}
+            if direction == "short" and current_price >= stop_loss:
+                return {"success": False, "error": f"Prix ({current_price}) deja au-dessus du SL ({stop_loss})"}
 
-        # Recalculer SL et TPs relatifs au prix actuel
-        sl_distance = abs(signal_entry - stop_loss)
-        tp1_distance = abs(tp1 - signal_entry)
-        tp2_distance = abs(tp2 - signal_entry)
-        tp3_distance = abs(tp3 - signal_entry)
+            # Recalculer SL et TPs relatifs au prix actuel
+            sl_distance = abs(signal_entry - stop_loss)
+            tp1_distance = abs(tp1 - signal_entry)
+            tp2_distance = abs(tp2 - signal_entry)
+            tp3_distance = abs(tp3 - signal_entry)
 
-        if direction == "long":
-            entry_price = current_price
-            stop_loss = current_price - sl_distance
-            tp1 = current_price + tp1_distance
-            tp2 = current_price + tp2_distance
-            tp3 = current_price + tp3_distance
+            if direction == "long":
+                entry_price = current_price
+                stop_loss = current_price - sl_distance
+                tp1 = current_price + tp1_distance
+                tp2 = current_price + tp2_distance
+                tp3 = current_price + tp3_distance
+            else:
+                entry_price = current_price
+                stop_loss = current_price + sl_distance
+                tp1 = current_price - tp1_distance
+                tp2 = current_price - tp2_distance
+                tp3 = current_price - tp3_distance
+
+            logger.info(f"MARKET - prix actuel {current_price} (signal {signal_entry})")
+
         else:
-            entry_price = current_price
-            stop_loss = current_price + sl_distance
-            tp1 = current_price - tp1_distance
-            tp2 = current_price - tp2_distance
-            tp3 = current_price - tp3_distance
-
-        logger.info(f"Prix actuel {current_price} (signal {signal_entry}, deviation {deviation_pct:.2f}%)")
+            # LIMIT : on garde le prix du signal comme prix d'entree
+            entry_price = signal_entry
+            logger.info(f"LIMIT - ordre en attente a {entry_price} (prix actuel {current_price})")
 
         # --- 1. Leverage et margin mode ---
         try:
@@ -129,11 +135,19 @@ async def execute_signal(signal: dict, margin_usdt: float = None) -> dict:
             f"({position_size_usd}$ / marge {margin_required}$)"
         )
 
-        # --- 3. Ordre d'entree (market) ---
-        entry_order = await exchange.create_market_order(symbol, side, quantity)
-        entry_id = entry_order.get("id")
-        actual_entry = entry_order.get("average") or entry_order.get("price") or entry_price
-        logger.info(f"ENTRY {side.upper()} {quantity} {symbol} @ {actual_entry} (order {entry_id})")
+        # --- 3. Ordre d'entree ---
+        if order_type == "limit":
+            # LIMIT : ordre en attente au prix du signal
+            entry_order = await exchange.create_limit_order(symbol, side, quantity, entry_price)
+            entry_id = entry_order.get("id")
+            actual_entry = entry_price
+            logger.info(f"LIMIT {side.upper()} {quantity} {symbol} @ {entry_price} (order {entry_id})")
+        else:
+            # MARKET : execution immediate
+            entry_order = await exchange.create_market_order(symbol, side, quantity)
+            entry_id = entry_order.get("id")
+            actual_entry = entry_order.get("average") or entry_order.get("price") or entry_price
+            logger.info(f"MARKET {side.upper()} {quantity} {symbol} @ {actual_entry} (order {entry_id})")
 
         # --- 4. Stop Loss ---
         sl_order_id = None
@@ -185,6 +199,7 @@ async def execute_signal(signal: dict, margin_usdt: float = None) -> dict:
 
         return {
             "success": True,
+            "order_type": order_type,
             "entry_order_id": entry_id,
             "actual_entry_price": actual_entry,
             "sl_order_id": sl_order_id,
