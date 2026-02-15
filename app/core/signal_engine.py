@@ -72,7 +72,9 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
         for name, check in tradeability["checks"].items():
             if check["score"] <= 0:
                 reasons.append(check["reason"])
-        return _no_trade(symbol, mode, "NON-TRADABLE", reasons, tradeability["score"])
+        result = _no_trade(symbol, mode, "NON-TRADABLE", reasons, tradeability["score"])
+        result["tradeability_checks"] = tradeability["checks"]
+        return result
 
     # =========================================
     # COUCHE B : DIRECTION (timeframe superieur)

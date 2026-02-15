@@ -49,9 +49,9 @@ def check_volume(vol_current: float, vol_mean: float) -> tuple[float, str]:
 
 
 def check_spread(spread_pct: float, mode: str) -> tuple[float, str]:
-    # Si orderbook indisponible (999 = valeur par defaut), ignorer
+    # Si orderbook indisponible (999 = valeur par defaut), score neutre-positif
     if spread_pct >= 900:
-        return 0.5, "Spread non disponible (orderbook indisponible)"
+        return 0.7, "Spread non disponible (orderbook indisponible)"
 
     kill = THRESHOLDS["spread_kill"]
     if spread_pct >= kill:
@@ -67,9 +67,9 @@ def check_spread(spread_pct: float, mode: str) -> tuple[float, str]:
 
 def check_depth(bid_depth: float, ask_depth: float, min_depth: float = 1000) -> tuple[float, str]:
     total = bid_depth + ask_depth
-    # Si orderbook indisponible, ignorer
+    # Si orderbook indisponible, score neutre-positif
     if total == 0:
-        return 0.5, "Profondeur non disponible (orderbook indisponible)"
+        return 0.7, "Profondeur non disponible (orderbook indisponible)"
     if total < min_depth:
         return 0.0, f"Profondeur {total:.0f} < {min_depth:.0f} min"
     elif total >= min_depth * 5:
