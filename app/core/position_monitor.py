@@ -1,12 +1,16 @@
 """
-Position Monitor : Surveille les positions ouvertes, gere le trailing stop.
-- Detecte TP1/TP2/TP3 hits via fetch_positions (taille position)
+Position Monitor : Surveille les positions en TEMPS REEL via WebSocket MEXC.
+- WebSocket push.deal = chaque trade sur MEXC -> reaction instantanee
+- Detecte TP1/TP2/TP3/SL via le prix en temps reel
 - Deplace le SL (breakeven apres TP1, TP1 price apres TP2)
-- Ferme et journalise quand TP3 ou SL touche
+- Polling lent (30s) en backup pour confirmer via fetch_positions
 """
 import asyncio
+import json
 import logging
 from datetime import datetime
+
+import websockets
 
 from app.core.market_data import market_data
 from app.database import (
@@ -20,40 +24,50 @@ from app.services.telegram_bot import send_trade_update
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL = 3
-QTY_TOLERANCE_PCT = 5
+BACKUP_POLL_INTERVAL = 30
+WS_URL = "wss://contract.mexc.com/edge"
 
 
 class PositionMonitor:
     def __init__(self):
         self.running = False
+        self._positions: dict[int, dict] = {}  # pos_id -> pos data (cache)
+        self._ws_tasks: dict[str, asyncio.Task] = {}  # symbol -> ws task
+        self._processing: set = set()  # pos_ids en cours de traitement (anti-doublon)
 
     async def start(self):
         self.running = True
-        logger.info("PositionMonitor demarre")
+        logger.info("PositionMonitor demarre (WebSocket temps reel)")
+
+        # Charger les positions existantes (recovery apres restart)
+        await self._reload_positions()
+
+        # Boucle backup lente
         while self.running:
             try:
-                await self._monitor_cycle()
+                await self._backup_check()
             except Exception as e:
-                logger.error(f"Erreur cycle monitor: {e}", exc_info=True)
-            await asyncio.sleep(POLL_INTERVAL)
+                logger.error(f"Erreur backup monitor: {e}", exc_info=True)
+            await asyncio.sleep(BACKUP_POLL_INTERVAL)
 
     async def stop(self):
         self.running = False
+        for symbol, task in self._ws_tasks.items():
+            task.cancel()
+        self._ws_tasks.clear()
         logger.info("PositionMonitor arrete")
 
     async def register_trade(self, signal: dict, result: dict) -> int | None:
         if not result.get("success"):
             return None
 
-        # Verifier qu'il n'y a pas deja une position active sur ce symbol+direction
-        existing = await get_active_positions()
-        for p in existing:
-            if p["symbol"] == signal["symbol"] and p["direction"] == signal["direction"]:
+        # Verifier doublon symbol+direction
+        for p in self._positions.values():
+            if p["symbol"] == signal["symbol"] and p["direction"] == signal["direction"] and p.get("state") != "closed":
                 logger.warning(f"Position deja active pour {signal['symbol']} {signal['direction']}")
                 return None
 
-        pos_id = await insert_active_position({
+        pos_data = {
             "signal_id": signal.get("id"),
             "symbol": signal["symbol"],
             "direction": signal["direction"],
@@ -76,69 +90,170 @@ class PositionMonitor:
             "tp3_order_id": result["tp_order_ids"][2] if len(result.get("tp_order_ids", [])) > 2 else None,
             "entry_order_id": result.get("entry_order_id"),
             "mode": signal.get("mode"),
-        })
+        }
+
+        pos_id = await insert_active_position(pos_data)
+        pos_data["id"] = pos_id
+        pos_data["state"] = "active"
+        pos_data["tp1_hit"] = 0
+        pos_data["tp2_hit"] = 0
+        pos_data["tp3_hit"] = 0
+        pos_data["sl_hit"] = 0
+
+        self._positions[pos_id] = pos_data
         logger.info(f"Position enregistree: {signal['symbol']} {signal['direction']} qty={result['quantity']} (id={pos_id})")
+
+        # Demarrer le WebSocket temps reel pour ce symbol
+        self._ensure_ws(signal["symbol"])
         return pos_id
 
-    # --- Cycle principal ---
+    # --- WebSocket temps reel ---
 
-    async def _monitor_cycle(self):
-        positions = await get_active_positions()
-        if not positions:
+    def _ensure_ws(self, symbol: str):
+        if symbol in self._ws_tasks and not self._ws_tasks[symbol].done():
             return
+        self._ws_tasks[symbol] = asyncio.create_task(self._ws_price_stream(symbol))
+        logger.info(f"WS prix temps reel demarre: {symbol}")
 
-        for pos in positions:
+    async def _ws_price_stream(self, symbol: str):
+        mexc_symbol = symbol.split(":")[0].replace("-", "_").replace("/", "_")
+
+        while self.running:
             try:
-                await self._check_position(pos)
-            except Exception as e:
-                logger.error(f"Erreur check position {pos['symbol']}: {e}", exc_info=True)
-            await asyncio.sleep(0.5)
+                async with websockets.connect(WS_URL) as ws:
+                    # S'abonner aux deals (chaque trade = prix en temps reel)
+                    await ws.send(json.dumps({
+                        "method": "sub.deal",
+                        "param": {"symbol": mexc_symbol}
+                    }))
+                    logger.info(f"WS connecte: {symbol} (sub.deal)")
 
-    async def _check_position(self, pos: dict):
-        symbol = pos["symbol"]
-        exchange = market_data.exchange_private
-        if not exchange:
-            return
+                    ping_task = asyncio.create_task(self._ws_keepalive(ws))
 
-        # Fetch position reelle sur MEXC
-        try:
-            exchange_pos = await self._fetch_exchange_position(symbol)
-        except Exception as e:
-            logger.warning(f"Fetch position {symbol} echoue, skip: {e}")
-            return
+                    try:
+                        async for raw in ws:
+                            if not self.running:
+                                break
+                            msg = json.loads(raw)
+                            if msg.get("channel") == "push.deal" and msg.get("data"):
+                                price = float(msg["data"].get("p", 0))
+                                if price > 0:
+                                    await self._on_price_tick(symbol, price)
+                    finally:
+                        ping_task.cancel()
 
-        if exchange_pos is None:
-            # Position fermee ? Double check apres 2s
-            await asyncio.sleep(2)
+            except (websockets.ConnectionClosed, Exception) as e:
+                if self.running:
+                    logger.warning(f"WS {symbol} deconnecte: {e}, reconnexion dans 3s")
+                    await asyncio.sleep(3)
+
+            # Verifier s'il reste des positions actives pour ce symbol
+            if not self._has_active_positions(symbol):
+                logger.info(f"WS {symbol} arrete: plus de positions actives")
+                break
+
+    async def _ws_keepalive(self, ws):
+        while True:
+            await asyncio.sleep(20)
             try:
-                confirm = await self._fetch_exchange_position(symbol)
+                await ws.send('{"method":"ping"}')
             except Exception:
-                return
-            if confirm is not None:
-                return
+                break
 
-            # Position vraiment fermee : TP3 ou SL ?
-            ticker = await market_data.fetch_ticker(symbol)
-            current_price = ticker.get("price", 0)
-            if self._price_hit_tp3(current_price, pos):
-                await self._handle_tp3_hit(pos)
+    def _has_active_positions(self, symbol: str) -> bool:
+        return any(
+            p["symbol"] == symbol and p.get("state") != "closed"
+            for p in self._positions.values()
+        )
+
+    async def _on_price_tick(self, symbol: str, price: float):
+        for pos_id, pos in list(self._positions.items()):
+            if pos["symbol"] != symbol or pos.get("state") == "closed":
+                continue
+            if pos_id in self._processing:
+                continue
+
+            direction = pos["direction"]
+
+            # TP1
+            if not pos["tp1_hit"]:
+                tp1_hit = (price >= pos["tp1"]) if direction == "long" else (price <= pos["tp1"])
+                if tp1_hit:
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_tp1_hit(pos)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
+
+                # SL (avant TP1)
+                sl_hit = (price <= pos["stop_loss"]) if direction == "long" else (price >= pos["stop_loss"])
+                if sl_hit:
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_sl_hit(pos)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
+
+            # TP2
+            elif not pos["tp2_hit"]:
+                tp2_hit = (price >= pos["tp2"]) if direction == "long" else (price <= pos["tp2"])
+                if tp2_hit:
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_tp2_hit(pos)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
+
+                # SL breakeven
+                sl_hit = (price <= pos["stop_loss"]) if direction == "long" else (price >= pos["stop_loss"])
+                if sl_hit:
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_sl_hit(pos)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
+
+            # TP3
             else:
-                await self._handle_sl_hit(pos)
-            return
+                tp3_hit = (price >= pos["tp3"]) if direction == "long" else (price <= pos["tp3"])
+                if tp3_hit:
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_tp3_hit(pos)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
 
-        actual_qty = abs(exchange_pos.get("contracts", 0))
-        original_qty = pos["original_quantity"]
+                # SL trailing
+                sl_hit = (price <= pos["stop_loss"]) if direction == "long" else (price >= pos["stop_loss"])
+                if sl_hit:
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_sl_hit(pos)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
 
-        qty_after_tp1 = original_qty * (1 - pos["tp1_close_pct"] / 100)
-        qty_after_tp2 = qty_after_tp1 - original_qty * (pos["tp2_close_pct"] / 100)
+    # --- Backup polling (confirmation via exchange) ---
 
-        # Detecter TP1
-        if not pos["tp1_hit"] and actual_qty <= qty_after_tp1 * (1 + QTY_TOLERANCE_PCT / 100):
-            await self._handle_tp1_hit(pos)
+    async def _backup_check(self):
+        await self._reload_positions()
 
-        # Detecter TP2
-        elif pos["tp1_hit"] and not pos["tp2_hit"] and actual_qty <= qty_after_tp2 * (1 + QTY_TOLERANCE_PCT / 100):
-            await self._handle_tp2_hit(pos)
+    async def _reload_positions(self):
+        positions = await get_active_positions()
+        for pos in positions:
+            self._positions[pos["id"]] = pos
+            self._ensure_ws(pos["symbol"])
+
+        # Nettoyer les positions fermees du cache
+        active_ids = {p["id"] for p in positions}
+        for pid in list(self._positions.keys()):
+            if pid not in active_ids:
+                del self._positions[pid]
 
     # --- Handlers TP/SL ---
 
@@ -159,6 +274,13 @@ class PositionMonitor:
             "remaining_quantity": qty_remaining,
             "state": "breakeven",
         })
+
+        # Mettre a jour le cache
+        pos["tp1_hit"] = 1
+        pos["sl_order_id"] = new_sl_id
+        pos["stop_loss"] = entry_price
+        pos["remaining_quantity"] = qty_remaining
+        pos["state"] = "breakeven"
 
         dec = self._get_decimals(entry_price)
         await send_trade_update(
@@ -184,6 +306,12 @@ class PositionMonitor:
             "state": "trailing",
         })
 
+        pos["tp2_hit"] = 1
+        pos["sl_order_id"] = new_sl_id
+        pos["stop_loss"] = tp1_price
+        pos["remaining_quantity"] = qty_remaining
+        pos["state"] = "trailing"
+
         dec = self._get_decimals(tp1_price)
         await send_trade_update(
             symbol, "tp2_hit",
@@ -195,8 +323,11 @@ class PositionMonitor:
         logger.info(f"TP3 HIT {symbol} - position fermee")
 
         await update_position(pos["id"], {"tp3_hit": 1})
+        pos["tp3_hit"] = 1
+
         pnl = self._calculate_total_pnl(pos, "tp3")
         await self._close_and_journal(pos, "tp3", pos["tp3"], pnl)
+        pos["state"] = "closed"
 
         await send_trade_update(
             symbol, "tp3_hit",
@@ -210,9 +341,11 @@ class PositionMonitor:
 
         await self._cancel_remaining_tp_orders(pos)
         await update_position(pos["id"], {"sl_hit": 1})
+        pos["sl_hit"] = 1
 
         pnl = self._calculate_total_pnl(pos, "sl")
         await self._close_and_journal(pos, "sl", pos["stop_loss"], pnl)
+        pos["state"] = "closed"
 
         state_label = {"active": "SL initial", "breakeven": "SL breakeven", "trailing": "SL trailing"}.get(state, "SL")
         sign = "+" if pnl >= 0 else ""
@@ -259,28 +392,7 @@ class PositionMonitor:
             if not pos.get(flag) and pos.get(key):
                 await self._cancel_order_safe(pos[key], pos["symbol"])
 
-    async def _fetch_exchange_position(self, symbol: str) -> dict | None:
-        exchange = market_data.exchange_private
-        if not exchange:
-            return None
-        positions = await exchange.fetch_positions([symbol])
-        for p in positions:
-            contracts = abs(float(p.get("contracts", 0) or 0))
-            if contracts > 0:
-                return {
-                    "contracts": contracts,
-                    "unrealizedPnl": float(p.get("unrealizedPnl", 0) or 0),
-                    "markPrice": float(p.get("markPrice", 0) or 0),
-                    "side": p.get("side"),
-                }
-        return None
-
     # --- Helpers calcul ---
-
-    def _price_hit_tp3(self, current_price: float, pos: dict) -> bool:
-        if pos["direction"] == "long":
-            return current_price >= pos["tp3"]
-        return current_price <= pos["tp3"]
 
     def _calculate_total_pnl(self, pos: dict, close_reason: str) -> float:
         entry = pos["entry_price"]
