@@ -163,6 +163,8 @@ async def execute_from_web(signal_id: int, body: dict = {}):
     # Executer en paper trading
     lev = signal_data.get("leverage", 10)
     entry_price = signal_data["entry_price"]
+    if not entry_price or entry_price <= 0:
+        return {"success": False, "error": "Prix d'entree invalide"}
     position_size_usd = margin_usdt * lev
     quantity = round(position_size_usd / entry_price, 6)
 
@@ -413,7 +415,9 @@ async def send_test_signal():
     if result["type"] != "signal":
         # Pas de signal valide, forcer un signal avec le prix actuel
         ticker = await market_data.fetch_ticker(symbol)
-        price = ticker.get("price", 87.0)
+        price = ticker.get("price", 0)
+        if price <= 0:
+            return {"status": "error", "message": "Prix indisponible, reessayez"}
         direction = "long" if result.get("tradeability_score", 0) > 50 else "short"
         if direction == "long":
             sl = round(price * 0.998, 2)
@@ -443,6 +447,10 @@ async def send_test_signal():
             "tp3_close_pct": 30,
             "reasons": result.get("details", ["Signal test"]),
         }
+
+    # Verifier que le signal a des prix valides
+    if not result.get("entry_price") or result["entry_price"] <= 0:
+        return {"status": "error", "message": "Analyse n'a pas produit de prix valide"}
 
     signal_id = await insert_signal(result)
     result["id"] = signal_id
