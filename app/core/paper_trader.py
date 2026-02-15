@@ -13,10 +13,8 @@ from app.core.position_monitor import position_monitor
 
 logger = logging.getLogger(__name__)
 
-MARGIN_PCT = 5.0    # 5% du solde par trade
-MIN_MARGIN = 2.0    # Minimum 2$
-MAX_MARGIN = 20.0   # Maximum 20$
-MAX_OPEN = 5        # Max 5 positions simultanées
+FIXED_MARGIN = 10.0  # 10$ fixe par trade
+MAX_OPEN = 5         # Max 5 positions simultanées
 
 
 class PaperTrader:
@@ -50,14 +48,12 @@ class PaperTrader:
                 logger.debug(f"Paper: deja une position {signal['symbol']} {signal['direction']}")
                 return False
 
-        # Calculer la marge
+        # Marge fixe 10$
         portfolio = await get_paper_portfolio()
         available = portfolio["current_balance"] - portfolio["reserved_margin"]
+        margin = FIXED_MARGIN
 
-        margin = available * (MARGIN_PCT / 100)
-        margin = max(MIN_MARGIN, min(MAX_MARGIN, margin))
-
-        if margin > available or available < MIN_MARGIN:
+        if margin > available:
             logger.warning(f"Paper: solde insuffisant ({available:.2f}$ dispo, {margin:.2f}$ requis)")
             return False
 
