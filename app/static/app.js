@@ -145,9 +145,7 @@ function renderSignals(signals) {
                 <button class="btn-amount" onclick="openExecModal(${sid},'market',5)">5$</button>
                 <button class="btn-amount" onclick="openExecModal(${sid},'market',10)">10$</button>
                 <button class="btn-amount" onclick="openExecModal(${sid},'market',25)">25$</button>
-                <button class="btn-amount" onclick="openExecModal(${sid},'market',50)">50$</button>
                 <button class="btn-custom" onclick="openExecModal(${sid},'market',0)">...$</button>
-                <button class="btn-limit" onclick="openExecModal(${sid},'limit',0)">LIMIT</button>
             </div>`;
         } else if (status === 'executed') {
             actionsHtml = '<div class="signal-actions"><span class="signal-status status-executed">&#x2705; Execute</span></div>';
@@ -638,7 +636,7 @@ function disconnectMexcWs() {
 // --- Execution depuis le dashboard ---
 let pendingExec = null;  // { signal_id, order_type, margin }
 
-function openExecModal(signalId, orderType, margin) {
+async function openExecModal(signalId, orderType, margin) {
     // Trouver les donnees du signal dans le DOM
     const card = document.getElementById(`signal-card-${signalId}`);
     if (!card) return;
@@ -647,16 +645,21 @@ function openExecModal(signalId, orderType, margin) {
     const direction = card.querySelector('.signal-direction')?.textContent || '?';
     const leverage = card.querySelector('.signal-body .value:last-child')?.textContent || '10x';
     const lev = parseInt(leverage) || 10;
-    const isLimit = orderType === 'limit';
     const needsInput = margin === 0;
 
-    const isTest = card.getAttribute('data-status') === 'test';
+    // Recuperer le solde paper
+    let paperBalance = 0;
+    try {
+        const pRes = await fetch(`${API}/api/paper/portfolio`);
+        const pData = await pRes.json();
+        paperBalance = (pData.current_balance || 0) - (pData.reserved_margin || 0);
+    } catch {}
+
     const title = document.getElementById('modal-title');
     const body = document.getElementById('modal-body');
     const confirmBtn = document.getElementById('modal-confirm');
 
-    title.textContent = isLimit ? `LIMIT ${direction} ${symbol}` : `MARKET ${direction} ${symbol}`;
-    if (isTest) title.textContent = `SIMULATION - ${title.textContent}`;
+    title.textContent = `PAPER ${direction} ${symbol}`;
 
     let inputHtml = '';
     if (needsInput) {
@@ -666,23 +669,20 @@ function openExecModal(signalId, orderType, margin) {
     const displayMargin = needsInput ? '...' : `${margin}$`;
     const displayPosition = needsInput ? '...' : `${margin * lev}$`;
 
-    const testWarning = isTest ? `<div style="background:rgba(210,153,34,0.15);border:1px solid rgba(210,153,34,0.3);border-radius:6px;padding:8px;margin-bottom:12px;font-size:12px;color:var(--orange);text-align:center;font-weight:600">&#x1F9EA; SIMULATION - Aucun ordre reel ne sera place</div>` : '';
-
     body.innerHTML = `
-        ${testWarning}
+        <div style="background:rgba(88,166,255,0.12);border:1px solid rgba(88,166,255,0.3);border-radius:6px;padding:8px;margin-bottom:12px;font-size:12px;color:var(--blue);text-align:center;font-weight:600">&#x1F4B0; Paper Trading - Solde dispo: ${paperBalance.toFixed(2)}$</div>
         <div class="row"><span class="lbl">Direction</span><span class="val" style="color:${direction==='LONG'?'var(--green)':'var(--red)'}">${direction}</span></div>
-        <div class="row"><span class="lbl">Type</span><span class="val">${isLimit ? 'LIMIT' : 'MARKET'}</span></div>
         <div class="row"><span class="lbl">Levier</span><span class="val">${lev}x</span></div>
         <div class="row"><span class="lbl">Marge</span><span class="val" id="modal-margin-display">${displayMargin}</span></div>
         <div class="row"><span class="lbl">Position</span><span class="val" id="modal-position-display">${displayPosition}</span></div>
         ${inputHtml}
     `;
 
-    confirmBtn.textContent = isLimit ? 'Placer LIMIT' : 'Executer MARKET';
-    confirmBtn.className = isLimit ? 'btn-exec limit' : 'btn-exec';
+    confirmBtn.textContent = 'Paper Trade';
+    confirmBtn.className = 'btn-exec';
     confirmBtn.disabled = false;
 
-    pendingExec = { signal_id: signalId, order_type: orderType, margin: margin, lev: lev };
+    pendingExec = { signal_id: signalId, order_type: 'market', margin: margin, lev: lev };
 
     document.getElementById('exec-modal').style.display = 'flex';
 

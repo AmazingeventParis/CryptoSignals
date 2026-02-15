@@ -133,14 +133,13 @@ async def debug_pair(symbol: str, mode: str = Query("scalping")):
 
 @router.post("/execute/{signal_id}")
 async def execute_from_web(signal_id: int, body: dict = {}):
-    """Execute un signal depuis le dashboard web."""
-    from app.database import get_signal_by_id, update_signal_status
-    from app.core.order_executor import execute_signal
-    from app.services.telegram_bot import send_execution_result
+    """Execute un signal en paper trading depuis le dashboard."""
+    from app.database import get_signal_by_id, update_signal_status, get_paper_portfolio
+    from app.core.paper_trader import paper_trader
+    from app.core.position_monitor import position_monitor
     import json as _json
 
     margin_usdt = body.get("margin", 10)
-    order_type = body.get("order_type", "market")
 
     signal_db = await get_signal_by_id(signal_id)
     if not signal_db:
@@ -151,36 +150,57 @@ async def execute_from_web(signal_id: int, body: dict = {}):
 
     signal_data = {
         **signal_db,
+        "type": "signal",
         "reasons": _json.loads(signal_db.get("reasons", "[]")) if isinstance(signal_db.get("reasons"), str) else signal_db.get("reasons", []),
     }
 
-    is_test = signal_db.get("status") == "test"
+    # Verifier le solde paper
+    portfolio = await get_paper_portfolio()
+    available = portfolio["current_balance"] - portfolio["reserved_margin"]
+    if margin_usdt > available:
+        return {"success": False, "error": f"Solde insuffisant ({available:.2f}$ dispo)"}
+
+    # Executer en paper trading
     lev = signal_data.get("leverage", 10)
+    entry_price = signal_data["entry_price"]
+    position_size_usd = margin_usdt * lev
+    quantity = round(position_size_usd / entry_price, 6)
 
-    if is_test:
-        position_usd = margin_usdt * lev
-        fake_result = {
-            "success": True,
-            "order_type": order_type,
-            "entry_order_id": "TEST",
-            "actual_entry_price": signal_data["entry_price"],
-            "sl_order_id": "TEST",
-            "tp_order_ids": ["TEST", "TEST", "TEST"],
-            "quantity": round(position_usd / signal_data["entry_price"], 6),
-            "position_size_usd": position_usd,
-            "margin_required": margin_usdt,
-            "balance": 100.0,
-        }
-        await send_execution_result(signal_data, fake_result)
-        return {**fake_result, "is_test": True}
+    fake_result = {
+        "success": True,
+        "order_type": "market",
+        "entry_order_id": None,
+        "actual_entry_price": entry_price,
+        "sl_order_id": None,
+        "tp_order_ids": [None, None, None],
+        "quantity": quantity,
+        "position_size_usd": round(position_size_usd, 2),
+        "margin_required": round(margin_usdt, 2),
+        "balance": round(available - margin_usdt, 2),
+    }
 
-    result = await execute_signal(signal_data, margin_usdt=margin_usdt, order_type=order_type)
+    # Enregistrer dans le position monitor pour suivi temps reel
+    pos_id = await position_monitor.register_trade(signal_data, fake_result)
+    if pos_id is None:
+        return {"success": False, "error": "Position deja active sur ce symbol"}
 
-    new_status = "executed" if result["success"] else "error"
-    await update_signal_status(signal_id, new_status)
+    # Reserver la marge paper
+    from app.database import reserve_paper_margin
+    await reserve_paper_margin(margin_usdt)
+    paper_trader._open_positions[pos_id] = margin_usdt
 
-    await send_execution_result(signal_data, result)
-    return result
+    await update_signal_status(signal_id, "executed")
+
+    return {
+        "success": True,
+        "pos_id": pos_id,
+        "margin": round(margin_usdt, 2),
+        "position_usd": round(position_size_usd, 2),
+        "quantity": quantity,
+        "entry_price": entry_price,
+        "leverage": lev,
+        "balance_after": round(available - margin_usdt, 2),
+    }
 
 
 @router.get("/sentiment")
