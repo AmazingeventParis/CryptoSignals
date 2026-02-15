@@ -89,14 +89,23 @@ async def execute_signal(signal: dict, margin_usdt: float = None, order_type: st
             logger.info(f"LIMIT - ordre en attente a {entry_price} (prix actuel {current_price})")
 
         # --- 1. Leverage et margin mode ---
+        # MEXC Futures necessite openType (1=isolated, 2=cross) et positionType (1=long, 2=short)
+        position_type = 1 if direction == "long" else 2  # 1=long, 2=short
+        open_type = 1  # 1=isolated
+
         try:
-            await exchange.set_margin_mode("isolated", symbol)
+            await exchange.set_margin_mode("isolated", symbol, params={
+                "openType": open_type,
+                "positionType": position_type,
+            })
         except Exception as e:
-            # Peut echouer si deja en isolated
             logger.debug(f"set_margin_mode: {e}")
 
-        await exchange.set_leverage(leverage, symbol)
-        logger.info(f"Leverage {leverage}x set pour {symbol}")
+        await exchange.set_leverage(leverage, symbol, params={
+            "openType": open_type,
+            "positionType": position_type,
+        })
+        logger.info(f"Leverage {leverage}x set pour {symbol} ({direction})")
 
         # --- 2. Taille de position ---
         balance = await market_data.fetch_balance()

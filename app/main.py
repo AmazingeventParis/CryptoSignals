@@ -14,7 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import websockets
 
 from app.config import SETTINGS, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID
-from app.database import init_db, get_signal_by_id, update_signal_status, get_latest_active_signal
+from app.database import init_db, get_signal_by_id, update_signal_status
 from app.core.market_data import market_data
 from app.core.scanner import scanner
 from app.core.order_executor import execute_signal
@@ -187,6 +187,27 @@ async def telegram_webhook(request: Request):
                 },
             )
 
+        # === CUSTOM : montant libre MARKET ===
+        elif data.startswith("cust_"):
+            signal_id = int(data.split("_")[1])
+            signal = await get_signal_by_id(signal_id)
+            if not signal:
+                await answer_callback_query(callback_id)
+                return {"ok": True}
+
+            await answer_callback_query(callback_id)
+            await edit_message_reply_markup(chat_id, message_id)
+
+            pending_executions[str(chat_id)] = {
+                "signal_id": signal_id,
+                "step": "custom_market",
+            }
+
+            from app.services.telegram_bot import send_message
+            await send_message(
+                "\U0001f4b2 <b>Montant MARKET ?</b>\nTape le montant en $ (ex: 15)"
+            )
+
         # === LIMIT GO : montant choisi -> place ordre limit ===
         elif data.startswith("lgo_"):
             parts = data.split("_")
@@ -227,14 +248,10 @@ async def telegram_webhook(request: Request):
                 margin_usdt = float(match.group(1))
                 pending = pending_executions.pop(chat_id, None)
                 if pending:
-                    # En attente LIMIT
+                    # En attente (LIMIT ou MARKET texte libre)
                     signal_id = pending["signal_id"]
-                    await _do_execute(chat_id, signal_id, "limit", margin_usdt=margin_usdt)
-                else:
-                    # Pas de pending -> MARKET sur le dernier signal actif
-                    latest = await get_latest_active_signal()
-                    if latest:
-                        await _do_execute(chat_id, latest["id"], "market", margin_usdt=margin_usdt)
+                    order_type = "limit" if pending.get("step") == "limit_amount" else "market"
+                    await _do_execute(chat_id, signal_id, order_type, margin_usdt=margin_usdt)
 
     return {"ok": True}
 

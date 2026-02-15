@@ -60,8 +60,7 @@ async def send_signal(signal: dict):
         f"<code>{signal['tp2']:.{dec}f}</code> / "
         f"<code>{signal['tp3']:.{dec}f}</code>\n"
         f"\U0001f527 {lev}x | {signal.get('setup_type', '')} "
-        f"| R:R 1:{signal.get('rr_ratio', 0)}\n\n"
-        f"\u26a1 <b>Clique = MARKET direct</b> | Tape montant perso"
+        f"| R:R 1:{signal.get('rr_ratio', 0)}"
     )
 
     reply_markup = {
@@ -71,9 +70,10 @@ async def send_signal(signal: dict):
                 {"text": "10$", "callback_data": f"go_10_{signal_id}"},
                 {"text": "25$", "callback_data": f"go_25_{signal_id}"},
                 {"text": "50$", "callback_data": f"go_50_{signal_id}"},
+                {"text": "...$", "callback_data": f"cust_{signal_id}"},
             ],
             [
-                {"text": "\U0001f4cb LIMIT @ " + f"{entry:.{dec}f}", "callback_data": f"lmt_{signal_id}"},
+                {"text": "\U0001f4cb LIMIT", "callback_data": f"lmt_{signal_id}"},
                 {"text": "\u274c", "callback_data": f"skip_{signal_id}"},
             ],
         ]
