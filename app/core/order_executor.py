@@ -1,6 +1,6 @@
 """
 Order Executor : place les ordres sur MEXC Futures via ccxt.
-Entree market + Stop Loss + Take Profits (3 niveaux).
+Verifie le prix actuel, puis: Entree market + Stop Loss + Take Profits (3 niveaux).
 """
 import logging
 from app.core.market_data import market_data
@@ -8,12 +8,16 @@ from app.core.risk_manager import calculate_position_size
 
 logger = logging.getLogger(__name__)
 
+# Max deviation autorisee entre le prix du signal et le prix actuel
+MAX_PRICE_DEVIATION_PCT = 0.3
+
 
 async def execute_signal(signal: dict) -> dict:
     """
     Execute un signal sur MEXC Futures.
+    0. Verifie que le prix actuel n'a pas trop devie du signal
     1. Set leverage + margin mode
-    2. Calcule la taille de position
+    2. Calcule la taille de position (sur le prix actuel)
     3. Place l'ordre market (entree)
     4. Place SL (stop market)
     5. Place TP1, TP2, TP3 (take profit market)
@@ -25,7 +29,7 @@ async def execute_signal(signal: dict) -> dict:
     symbol = signal["symbol"]
     direction = signal["direction"]
     leverage = signal.get("leverage", 10)
-    entry_price = signal["entry_price"]
+    signal_entry = signal["entry_price"]
     stop_loss = signal["stop_loss"]
     tp1 = signal["tp1"]
     tp2 = signal["tp2"]
@@ -35,6 +39,49 @@ async def execute_signal(signal: dict) -> dict:
     exit_side = "sell" if direction == "long" else "buy"
 
     try:
+        # --- 0. Verifier le prix actuel ---
+        ticker = await market_data.fetch_ticker(symbol)
+        current_price = ticker.get("price", 0)
+        if current_price <= 0:
+            return {"success": False, "error": "Prix actuel indisponible"}
+
+        deviation_pct = abs(current_price - signal_entry) / signal_entry * 100
+        if deviation_pct > MAX_PRICE_DEVIATION_PCT:
+            return {
+                "success": False,
+                "error": (
+                    f"Prix a trop bouge ! Signal: {signal_entry}, "
+                    f"Actuel: {current_price} (deviation {deviation_pct:.2f}% > {MAX_PRICE_DEVIATION_PCT}%)"
+                ),
+            }
+
+        # Verifier que le prix va dans le bon sens (pas deja au-dela du SL)
+        if direction == "long" and current_price <= stop_loss:
+            return {"success": False, "error": f"Prix ({current_price}) deja sous le SL ({stop_loss})"}
+        if direction == "short" and current_price >= stop_loss:
+            return {"success": False, "error": f"Prix ({current_price}) deja au-dessus du SL ({stop_loss})"}
+
+        # Recalculer SL et TPs relatifs au prix actuel
+        sl_distance = abs(signal_entry - stop_loss)
+        tp1_distance = abs(tp1 - signal_entry)
+        tp2_distance = abs(tp2 - signal_entry)
+        tp3_distance = abs(tp3 - signal_entry)
+
+        if direction == "long":
+            entry_price = current_price
+            stop_loss = current_price - sl_distance
+            tp1 = current_price + tp1_distance
+            tp2 = current_price + tp2_distance
+            tp3 = current_price + tp3_distance
+        else:
+            entry_price = current_price
+            stop_loss = current_price + sl_distance
+            tp1 = current_price - tp1_distance
+            tp2 = current_price - tp2_distance
+            tp3 = current_price - tp3_distance
+
+        logger.info(f"Prix actuel {current_price} (signal {signal_entry}, deviation {deviation_pct:.2f}%)")
+
         # --- 1. Leverage et margin mode ---
         try:
             await exchange.set_margin_mode("isolated", symbol)

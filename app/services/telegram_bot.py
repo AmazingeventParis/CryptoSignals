@@ -152,10 +152,14 @@ async def edit_message_reply_markup(chat_id: int, message_id: int, reply_markup:
 async def send_execution_result(signal: dict, result: dict):
     """Envoie le resultat de l'execution."""
     if result["success"]:
+        entry = result['actual_entry_price']
+        decimals = _get_decimals(float(entry)) if entry else 4
+
         text = f"""\U0001f680 <b>ORDRE EXECUTE !</b>
 
 \U0001f4b9 {signal['symbol']} {signal['direction'].upper()}
-\U0001f4b0 Entree : {result['actual_entry_price']}
+\U0001f4b0 Entree reelle : <code>{entry}</code>
+\U0001f4b0 Signal etait  : <code>{signal.get('entry_price', 'N/A')}</code>
 \U0001f4e6 Quantite : {result['quantity']}
 \U0001f4b5 Position : {result['position_size_usd']}$
 \U0001f512 Marge : {result['margin_required']}$
@@ -163,12 +167,17 @@ async def send_execution_result(signal: dict, result: dict):
 \U0001f6d1 SL place : {'Oui' if result.get('sl_order_id') else 'Non'}
 \u2705 TPs places : {sum(1 for t in result.get('tp_order_ids', []) if t)}/3
 
-\U0001f3e6 Balance : {result['balance']:.2f} USDT"""
+\U0001f3e6 Balance restante : {result['balance']:.2f} USDT
+
+\u26a0\ufe0f <i>SL et TPs sont actifs. Va sur MEXC pour verifier.</i>"""
     else:
-        text = f"""\u274c <b>ERREUR EXECUTION</b>
+        text = f"""\u274c <b>EXECUTION REFUSEE</b>
 
 {signal['symbol']} {signal['direction'].upper()}
-Erreur : {result.get('error', 'Inconnue')}"""
+\u26a0\ufe0f {result.get('error', 'Erreur inconnue')}
+
+<i>Le prix a peut-etre trop bouge depuis le signal.
+Attends le prochain signal.</i>"""
 
     await send_message(text)
 
