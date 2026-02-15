@@ -285,10 +285,10 @@ def detect_momentum(indicators: dict, direction_bias: str) -> dict | None:
     price = indicators.get("last_close", 0)
     rsi = indicators.get("last_rsi", 50)
     adx = indicators.get("last_adx", 0)
-    di_plus = indicators.get("last_di_plus", 0)
-    di_minus = indicators.get("last_di_minus", 0)
-    ema20 = indicators.get("ema20", 0)
-    ema50 = indicators.get("ema50", 0)
+    di_plus = indicators.get("last_plus_di", 0)
+    di_minus = indicators.get("last_minus_di", 0)
+    ema20 = indicators.get("last_ema_fast", 0)
+    ema50 = indicators.get("last_ema_slow", 0)
     macd_hist = indicators.get("last_macd_histogram", 0)
 
     if not price or adx < 20:
