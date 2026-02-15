@@ -1031,22 +1031,14 @@ function renderLivePositions(positions) {
 
 // --- Fermer position manuellement ---
 async function closePosition(posId) {
-    if (!confirm('Fermer cette position au prix actuel ?')) return;
-
     try {
         const res = await fetch(`${API}/api/positions/${posId}/close`, { method: 'POST' });
         const data = await res.json();
-
         if (data.success) {
-            const sign = data.pnl_usd >= 0 ? '+' : '';
-            alert(`Position fermee !\nP&L: ${sign}${data.pnl_usd.toFixed(2)}$ (${sign}${data.pnl_pct.toFixed(1)}%)\nPrix sortie: ${data.exit_price}`);
             refreshAll();
-        } else {
-            alert('Erreur: ' + (data.error || 'Impossible de fermer'));
         }
     } catch (e) {
         console.error('Erreur close position:', e);
-        alert('Erreur reseau');
     }
 }
 
