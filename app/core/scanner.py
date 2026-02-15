@@ -132,11 +132,11 @@ class Scanner:
         )
 
     def _has_recent_signal(self, symbol: str) -> bool:
-        """Cooldown 5 min par symbol pour eviter flip-flop LONG/SHORT."""
+        """Cooldown 2 min par symbol pour eviter flip-flop LONG/SHORT."""
         last = self._signal_timestamps.get(symbol)
         if not last:
             return False
-        return (datetime.utcnow() - last).total_seconds() < 300
+        return (datetime.utcnow() - last).total_seconds() < 120
 
     def _is_duplicate_signal(self, key: str, new_signal: dict) -> bool:
         if key not in self.last_signals:
