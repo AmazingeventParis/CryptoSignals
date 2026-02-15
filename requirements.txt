@@ -29,3 +29,6 @@ apscheduler==3.11.0
 
 # WebSocket
 websockets==14.1
+
+# Auth
+itsdangerous==2.2.0

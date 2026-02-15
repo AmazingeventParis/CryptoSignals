@@ -4,16 +4,24 @@ Point d'entree principal : FastAPI + Scanner + Dashboard.
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import websockets
 
 from app.config import SETTINGS, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID
+
+# Auth config
+DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "default-secret-change-me")
+SESSION_MAX_AGE = 30 * 24 * 3600  # 30 jours
+_serializer = URLSafeTimedSerializer(SESSION_SECRET)
 from app.database import init_db, get_signal_by_id, update_signal_status
 from app.core.market_data import market_data
 from app.core.scanner import scanner
@@ -88,6 +96,46 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# --- Auth helpers ---
+def _check_session(request: Request) -> bool:
+    token = request.cookies.get("session")
+    if not token:
+        return False
+    try:
+        _serializer.loads(token, max_age=SESSION_MAX_AGE)
+        return True
+    except (BadSignature, SignatureExpired):
+        return False
+
+
+# Routes exemptees d'auth
+_PUBLIC_PATHS = {"/login", "/api/login", "/health", "/telegram/webhook"}
+_PUBLIC_PREFIXES = ("/static/login.html",)
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+
+        # Routes publiques
+        if path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PREFIXES):
+            return await call_next(request)
+
+        # Si pas de mot de passe configure, tout passer (dev local)
+        if not DASHBOARD_PASSWORD:
+            return await call_next(request)
+
+        # Verifier session
+        if _check_session(request):
+            return await call_next(request)
+
+        # Non authentifie
+        if path.startswith("/api/") or path.startswith("/ws/"):
+            return JSONResponse({"error": "Non authentifie"}, status_code=401)
+
+        return RedirectResponse("/login", status_code=302)
+
+
 # No-cache pour fichiers statiques
 class NoCacheMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -97,6 +145,7 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(NoCacheMiddleware)
+app.add_middleware(AuthMiddleware)
 
 # API routes
 app.include_router(router)
@@ -104,6 +153,36 @@ app.include_router(router)
 # Dashboard static files
 static_dir = BASE_DIR / "app" / "static"
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+@app.get("/login")
+async def login_page():
+    return FileResponse(str(static_dir / "login.html"))
+
+
+@app.post("/api/login")
+async def api_login(request: Request):
+    body = await request.json()
+    password = body.get("password", "")
+    if password == DASHBOARD_PASSWORD:
+        token = _serializer.dumps("authenticated")
+        response = JSONResponse({"ok": True})
+        response.set_cookie(
+            key="session",
+            value=token,
+            max_age=SESSION_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+        )
+        return response
+    return JSONResponse({"error": "Mot de passe incorrect"}, status_code=401)
+
+
+@app.post("/api/logout")
+async def api_logout():
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("session")
+    return response
 
 
 @app.get("/")
