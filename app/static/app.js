@@ -766,26 +766,46 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeModal();
 });
 
-// --- Positions live ---
-let liveInterval = null;
+// --- Positions live (WebSocket temps reel) ---
+let posWs = null;
+let posWsReconnect = null;
+
+function connectPositionsWs() {
+    if (posWs && posWs.readyState <= 1) return; // deja connecte
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${location.host}/ws/positions`;
+    posWs = new WebSocket(url);
+
+    posWs.onmessage = (evt) => {
+        try {
+            const data = JSON.parse(evt.data);
+            renderLivePositions(data.positions || []);
+        } catch {}
+    };
+
+    posWs.onclose = () => {
+        posWs = null;
+        posWsReconnect = setTimeout(connectPositionsWs, 2000);
+    };
+
+    posWs.onerror = () => { if (posWs) posWs.close(); };
+}
 
 async function fetchLivePositions() {
+    // Premier chargement via HTTP, puis le WS prend le relai
     try {
         const res = await fetch(`${API}/api/positions/live`);
         const data = await res.json();
         renderLivePositions(data.positions || []);
-
-        // Si des positions actives, refresh rapide (3s)
         if (data.positions && data.positions.length > 0) {
-            if (!liveInterval) {
-                liveInterval = setInterval(fetchLivePositions, 3000);
-            }
-        } else {
-            if (liveInterval) { clearInterval(liveInterval); liveInterval = null; }
+            connectPositionsWs();
         }
     } catch {
         document.getElementById('positions-live').innerHTML = '';
     }
+    // Toujours garder le WS connecte pour detecter les nouvelles positions
+    connectPositionsWs();
 }
 
 function renderLivePositions(positions) {
@@ -812,15 +832,17 @@ function renderLivePositions(positions) {
             const stateLabel = p.state === 'breakeven' ? 'BE' :
                                p.state === 'trailing' ? 'TRAIL' : 'ACTIF';
 
-            // Barre de progression entre SL et TP3
-            const sl = p.stop_loss;
-            const tp3 = p.tp3;
-            const cur = p.current_price || p.entry_price;
-            let progress = 0;
-            if (p.direction === 'long') {
-                progress = Math.max(0, Math.min(100, ((cur - sl) / (tp3 - sl)) * 100));
-            } else {
-                progress = Math.max(0, Math.min(100, ((sl - cur) / (sl - tp3)) * 100));
+            // Barre de progression (precalculee par le serveur ou calculee ici)
+            let progress = p.progress || 0;
+            if (!p.progress) {
+                const sl = p.stop_loss;
+                const tp3 = p.tp3;
+                const cur = p.current_price || p.entry_price;
+                if (p.direction === 'long') {
+                    progress = Math.max(0, Math.min(100, ((cur - sl) / (tp3 - sl)) * 100));
+                } else {
+                    progress = Math.max(0, Math.min(100, ((sl - cur) / (sl - tp3)) * 100));
+                }
             }
             const barColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
 

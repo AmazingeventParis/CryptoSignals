@@ -368,3 +368,150 @@ async def kline_ws(websocket: WebSocket, symbol: str, timeframe: str):
                 t.cancel()
     except (WebSocketDisconnect, Exception) as e:
         logger.info(f"WS client deconnecte: {mexc_symbol} - {e}")
+
+
+@app.websocket("/ws/positions")
+async def positions_ws(websocket: WebSocket):
+    """WebSocket temps reel : stream les prix et P&L des positions actives."""
+    await websocket.accept()
+    logger.info("WS positions client connecte")
+
+    try:
+        while True:
+            # Recuperer les positions actives depuis le cache du monitor
+            positions = list(position_monitor._positions.values())
+            active = [p for p in positions if p.get("state") != "closed"]
+
+            if not active:
+                await websocket.send_json({"positions": []})
+                await asyncio.sleep(2)
+                continue
+
+            # Collecter les symbols uniques
+            symbols = list(set(p["symbol"] for p in active))
+            mexc_symbols = {}
+            for s in symbols:
+                mexc_symbols[s] = s.split(":")[0].replace("-", "_").replace("/", "_")
+
+            # Connecter au WS MEXC pour tous les symbols
+            async with websockets.connect("wss://contract.mexc.com/edge") as mexc_ws:
+                # S'abonner aux deals de chaque symbol
+                for s, ms in mexc_symbols.items():
+                    await mexc_ws.send(json.dumps({
+                        "method": "sub.deal",
+                        "param": {"symbol": ms}
+                    }))
+
+                prices: dict[str, float] = {}
+                ping_task = asyncio.create_task(_ws_ping(mexc_ws))
+                listen_task = asyncio.create_task(_ws_listen_client(websocket))
+
+                try:
+                    async for raw in mexc_ws:
+                        # Verifier deconnexion client
+                        if listen_task.done():
+                            break
+
+                        msg = json.loads(raw)
+                        if msg.get("channel") == "push.deal" and msg.get("data"):
+                            price = float(msg["data"].get("p", 0))
+                            sym_key = msg.get("symbol", "")
+                            if price > 0:
+                                # Trouver le symbol original
+                                for s, ms in mexc_symbols.items():
+                                    if ms == sym_key:
+                                        prices[s] = price
+                                        break
+
+                                # Calculer P&L et envoyer
+                                result = []
+                                for p in active:
+                                    cur = prices.get(p["symbol"], 0)
+                                    if cur == 0:
+                                        continue
+                                    pnl_data = _calc_live_pnl(p, cur)
+                                    result.append(pnl_data)
+
+                                if result:
+                                    await websocket.send_json({"positions": result})
+
+                        # Re-checker les positions actives periodiquement
+                        new_active = [p for p in position_monitor._positions.values() if p.get("state") != "closed"]
+                        new_symbols = set(p["symbol"] for p in new_active)
+                        if new_symbols != set(symbols):
+                            break  # Reconnexion pour gerer les nouvelles paires
+
+                finally:
+                    ping_task.cancel()
+                    listen_task.cancel()
+
+    except (WebSocketDisconnect, Exception) as e:
+        logger.info(f"WS positions deconnecte: {e}")
+
+
+async def _ws_ping(ws):
+    while True:
+        await asyncio.sleep(20)
+        try:
+            await ws.send('{"method":"ping"}')
+        except Exception:
+            break
+
+
+async def _ws_listen_client(websocket: WebSocket):
+    try:
+        async for _ in websocket.iter_text():
+            pass
+    except Exception:
+        pass
+
+
+def _calc_live_pnl(pos: dict, current_price: float) -> dict:
+    entry = pos["entry_price"]
+    direction = pos["direction"]
+    original_qty = pos["original_quantity"]
+    remaining_qty = pos["remaining_quantity"]
+    dec = 2 if entry >= 100 else 4 if entry >= 1 else 6
+
+    realized = 0.0
+    if pos.get("tp1_hit"):
+        tp1_qty = original_qty * (pos.get("tp1_close_pct", 40) / 100)
+        diff = (pos["tp1"] - entry) if direction == "long" else (entry - pos["tp1"])
+        realized += diff * tp1_qty
+    if pos.get("tp2_hit"):
+        tp2_qty = original_qty * (pos.get("tp2_close_pct", 30) / 100)
+        diff = (pos["tp2"] - entry) if direction == "long" else (entry - pos["tp2"])
+        realized += diff * tp2_qty
+
+    diff = (current_price - entry) if direction == "long" else (entry - current_price)
+    unrealized = diff * remaining_qty
+    total = realized + unrealized
+    margin = pos.get("margin_required", 1) or 1
+    pnl_pct = (total / margin) * 100
+
+    sl = pos["stop_loss"]
+    tp3 = pos["tp3"]
+    if direction == "long":
+        progress = max(0, min(100, ((current_price - sl) / (tp3 - sl)) * 100)) if tp3 != sl else 50
+    else:
+        progress = max(0, min(100, ((sl - current_price) / (sl - tp3)) * 100)) if tp3 != sl else 50
+
+    return {
+        "id": pos["id"],
+        "symbol": pos["symbol"],
+        "direction": direction,
+        "entry_price": entry,
+        "current_price": round(current_price, 8),
+        "stop_loss": pos["stop_loss"],
+        "tp1": pos["tp1"],
+        "tp2": pos["tp2"],
+        "tp3": pos["tp3"],
+        "tp1_hit": pos.get("tp1_hit", 0),
+        "tp2_hit": pos.get("tp2_hit", 0),
+        "tp3_hit": pos.get("tp3_hit", 0),
+        "state": pos.get("state", "active"),
+        "margin_required": pos.get("margin_required", 0),
+        "total_pnl": round(total, 4),
+        "pnl_pct": round(pnl_pct, 2),
+        "progress": round(progress, 1),
+    }
