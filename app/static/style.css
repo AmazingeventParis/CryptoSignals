@@ -357,7 +357,99 @@ body {
 }
 .pos-close-btn:hover { background: var(--red); color: #fff; }
 
-/* Responsive */
+/* ============================================
+   DESKTOP LAYOUT (2 colonnes: sidebar + main)
+   ============================================ */
+@media (min-width: 1024px) {
+    #app { max-width: 1440px; padding: 0 24px; }
+
+    .desktop-layout {
+        display: flex;
+        gap: 24px;
+        align-items: flex-start;
+    }
+
+    .sidebar {
+        width: 340px;
+        flex-shrink: 0;
+        position: sticky;
+        top: 12px;
+        max-height: calc(100vh - 24px);
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
+    }
+    .sidebar::-webkit-scrollbar { width: 4px; }
+    .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .main-content {
+        flex: 1;
+        min-width: 0;
+    }
+
+    /* Header compact dans sidebar */
+    .sidebar .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 16px 0 12px;
+    }
+    .sidebar .header-right {
+        width: 100%;
+    }
+    .sidebar .balance {
+        font-size: 22px;
+        font-weight: 800;
+    }
+
+    /* Stats: grille 2 colonnes dans sidebar */
+    .sidebar .stats-row {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+        padding: 8px 0;
+    }
+    .sidebar .stat-card {
+        padding: 10px 8px;
+    }
+    .sidebar .stat-value {
+        font-size: 18px;
+    }
+
+    /* Positions dans sidebar: plus compact */
+    .sidebar .pos-card {
+        padding: 12px;
+    }
+    .sidebar .pos-prices {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+    }
+    .sidebar .pos-price-val {
+        font-size: 14px;
+    }
+    .sidebar .pos-levels {
+        gap: 4px;
+    }
+    .sidebar .pos-level {
+        font-size: 10px;
+        padding: 2px 6px;
+    }
+
+    /* Main content: tabs en haut */
+    .main-content .tabs {
+        position: sticky;
+        top: 0;
+        background: var(--bg);
+        z-index: 10;
+        padding: 12px 0 8px;
+    }
+
+    /* Chart plus grand sur desktop */
+    .main-content .chart-container {
+        height: 500px;
+    }
+}
+
+/* Responsive mobile */
 @media (max-width: 480px) {
     .stats-row { grid-template-columns: repeat(2, 1fr); }
     .stat-value { font-size: 16px; }
