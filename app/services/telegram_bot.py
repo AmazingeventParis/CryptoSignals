@@ -1,5 +1,5 @@
 """
-Telegram Bot : envoi des signaux et notifications.
+Telegram Bot : envoi des signaux avec boutons EXECUTE/SKIP + webhook.
 """
 import logging
 import httpx
@@ -10,50 +10,56 @@ logger = logging.getLogger(__name__)
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 
-async def send_message(text: str, parse_mode: str = "HTML"):
+async def send_message(text: str, parse_mode: str = "HTML", reply_markup: dict = None):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("Telegram non configure")
-        return
+        return None
 
     try:
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text,
+            "parse_mode": parse_mode,
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{BASE_URL}/sendMessage",
-                json={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "text": text,
-                    "parse_mode": parse_mode,
-                },
+                json=payload,
                 timeout=10,
             )
             if resp.status_code != 200:
                 logger.error(f"Telegram erreur: {resp.text}")
+                return None
+            data = resp.json()
+            return data.get("result", {}).get("message_id")
     except Exception as e:
         logger.error(f"Telegram send erreur: {e}")
+        return None
 
 
 async def send_signal(signal: dict):
+    """Envoie le signal avec boutons EXECUTE / SKIP."""
     direction = signal["direction"].upper()
     emoji = "\U0001f7e2" if direction == "LONG" else "\U0001f534"
     mode_label = "SCALPING" if signal["mode"] == "scalping" else "SWING"
 
-    # Score badge
     score = signal["score"]
     if score >= 80:
-        score_badge = "\U0001f525"  # feu
+        score_badge = "\U0001f525"
     elif score >= 65:
-        score_badge = "\u26a1"  # eclair
+        score_badge = "\u26a1"
     else:
-        score_badge = "\u2139\ufe0f"  # info
+        score_badge = "\u2139\ufe0f"
 
-    # Formatage prix intelligent
     entry = signal["entry_price"]
     decimals = _get_decimals(entry)
 
     reasons_text = "\n".join(f"  \u2022 {r}" for r in signal.get("reasons", []))
-
-    # Leverage
     lev = signal.get("leverage", 10)
+    signal_id = signal.get("id", 0)
 
     text = f"""{'━' * 25}
 {emoji} <b>{direction}  {signal['symbol']}</b>  [{mode_label}]
@@ -75,15 +81,99 @@ async def send_signal(signal: dict):
 {reasons_text}
 
 \u23f1 Break-even au TP1
-\u26a0\ufe0f <i>RISQUE: Ceci n'est PAS un conseil financier.
-Le trading de futures comporte un risque de perte totale.</i>
+\u26a0\ufe0f <i>Clique EXECUTE pour placer l'ordre sur MEXC.</i>
 {'━' * 25}"""
+
+    # Boutons inline
+    reply_markup = {
+        "inline_keyboard": [[
+            {"text": "\u2705 EXECUTE", "callback_data": f"exec_{signal_id}"},
+            {"text": "\u274c SKIP", "callback_data": f"skip_{signal_id}"},
+        ]]
+    }
+
+    msg_id = await send_message(text, reply_markup=reply_markup)
+    return msg_id
+
+
+async def answer_callback_query(callback_id: str, text: str):
+    """Repond a un callback de bouton inline."""
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{BASE_URL}/answerCallbackQuery",
+                json={"callback_query_id": callback_id, "text": text, "show_alert": True},
+                timeout=10,
+            )
+    except Exception as e:
+        logger.error(f"Erreur answer callback: {e}")
+
+
+async def edit_message(chat_id: int, message_id: int, new_text: str):
+    """Edite un message envoye (retire les boutons, met a jour le texte)."""
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{BASE_URL}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": new_text,
+                    "parse_mode": "HTML",
+                },
+                timeout=10,
+            )
+    except Exception as e:
+        logger.error(f"Erreur edit message: {e}")
+
+
+async def edit_message_reply_markup(chat_id: int, message_id: int, reply_markup: dict = None):
+    """Retire ou modifie les boutons d'un message."""
+    try:
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        else:
+            payload["reply_markup"] = {"inline_keyboard": []}
+
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{BASE_URL}/editMessageReplyMarkup",
+                json=payload,
+                timeout=10,
+            )
+    except Exception as e:
+        logger.error(f"Erreur edit reply markup: {e}")
+
+
+async def send_execution_result(signal: dict, result: dict):
+    """Envoie le resultat de l'execution."""
+    if result["success"]:
+        text = f"""\U0001f680 <b>ORDRE EXECUTE !</b>
+
+\U0001f4b9 {signal['symbol']} {signal['direction'].upper()}
+\U0001f4b0 Entree : {result['actual_entry_price']}
+\U0001f4e6 Quantite : {result['quantity']}
+\U0001f4b5 Position : {result['position_size_usd']}$
+\U0001f512 Marge : {result['margin_required']}$
+
+\U0001f6d1 SL place : {'Oui' if result.get('sl_order_id') else 'Non'}
+\u2705 TPs places : {sum(1 for t in result.get('tp_order_ids', []) if t)}/3
+
+\U0001f3e6 Balance : {result['balance']:.2f} USDT"""
+    else:
+        text = f"""\u274c <b>ERREUR EXECUTION</b>
+
+{signal['symbol']} {signal['direction'].upper()}
+Erreur : {result.get('error', 'Inconnue')}"""
 
     await send_message(text)
 
 
 async def send_no_trade_summary(results: list[dict]):
-    """Envoie un resume periodique des paires non-tradables (optionnel)."""
     if not results:
         return
 
@@ -111,10 +201,11 @@ async def send_startup_message():
 
     text = f"""\U0001f680 <b>Crypto Signals Bot demarre !</b>
 
-\U0001f4e1 Mode : Paper Trading
+\U0001f4e1 Mode : Paper Trading + Execution manuelle
 \U0001f4ca Paires : {pairs}
 \u23f0 Scan toutes les 30s
 \U0001f50d Modes : Scalping + Swing
+\U0001f3af Boutons EXECUTE sur chaque signal
 
 \u2705 Systeme operationnel"""
 
@@ -132,6 +223,33 @@ async def send_trade_update(symbol: str, update_type: str, details: str):
     emoji = emoji_map.get(update_type, "\U0001f4e2")
     text = f"{emoji} <b>{symbol}</b> - {details}"
     await send_message(text)
+
+
+async def register_webhook(webhook_url: str):
+    """Enregistre le webhook Telegram."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{BASE_URL}/setWebhook",
+                json={"url": webhook_url, "allowed_updates": ["callback_query"]},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("ok"):
+                logger.info(f"Telegram webhook enregistre: {webhook_url}")
+            else:
+                logger.error(f"Telegram webhook erreur: {data}")
+    except Exception as e:
+        logger.error(f"Erreur register webhook: {e}")
+
+
+async def delete_webhook():
+    """Supprime le webhook Telegram."""
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(f"{BASE_URL}/deleteWebhook", timeout=10)
+    except Exception:
+        pass
 
 
 def _get_decimals(price: float) -> int:

@@ -157,6 +157,22 @@ async def log_tradeability(symbol: str, score: float, is_tradable: bool, details
         await db.commit()
 
 
+async def get_signal_by_id(signal_id: int) -> dict | None:
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM signals WHERE id = ?", (signal_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def update_signal_status(signal_id: int, status: str):
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            "UPDATE signals SET status = ? WHERE id = ?", (status, signal_id)
+        )
+        await db.commit()
+
+
 async def get_signals(limit: int = 50, symbol: str = None, mode: str = None) -> list[dict]:
     async with aiosqlite.connect(str(DB_PATH)) as db:
         db.row_factory = aiosqlite.Row

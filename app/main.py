@@ -6,19 +6,23 @@ import json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import websockets
 
-from app.config import SETTINGS, LOG_LEVEL, BASE_DIR
-from app.database import init_db
+from app.config import SETTINGS, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID
+from app.database import init_db, get_signal_by_id, update_signal_status
 from app.core.market_data import market_data
 from app.core.scanner import scanner
+from app.core.order_executor import execute_signal
 from app.api.routes import router
-from app.services.telegram_bot import send_startup_message
+from app.services.telegram_bot import (
+    send_startup_message, register_webhook, answer_callback_query,
+    edit_message_reply_markup, send_execution_result,
+)
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -45,6 +49,12 @@ async def lifespan(app: FastAPI):
         await send_startup_message()
     except Exception as e:
         logger.warning(f"Telegram startup message echoue: {e}")
+
+    # Enregistrer le webhook Telegram pour les boutons
+    try:
+        await register_webhook("https://crypto.swipego.app/telegram/webhook")
+    except Exception as e:
+        logger.warning(f"Telegram webhook registration echoue: {e}")
 
     # Lancer le scanner en background
     scanner_task = asyncio.create_task(scanner.start())
@@ -92,6 +102,68 @@ async def dashboard():
 @app.get("/health")
 async def health():
     return {"status": "ok", "scanner_running": scanner.running}
+
+
+# --- Telegram Webhook : boutons EXECUTE/SKIP ---
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    try:
+        update = await request.json()
+    except Exception:
+        return {"ok": True}
+
+    callback = update.get("callback_query")
+    if not callback:
+        return {"ok": True}
+
+    callback_id = callback.get("id")
+    data = callback.get("data", "")
+    chat_id = callback.get("message", {}).get("chat", {}).get("id")
+    message_id = callback.get("message", {}).get("message_id")
+
+    # Verifier que c'est bien notre chat
+    if str(chat_id) != str(TELEGRAM_CHAT_ID):
+        return {"ok": True}
+
+    if data.startswith("exec_"):
+        signal_id = int(data.split("_")[1])
+        signal = await get_signal_by_id(signal_id)
+
+        if not signal:
+            await answer_callback_query(callback_id, "Signal introuvable")
+            return {"ok": True}
+
+        if signal["status"] == "executed":
+            await answer_callback_query(callback_id, "Deja execute !")
+            return {"ok": True}
+
+        # Retirer les boutons immediatement
+        await edit_message_reply_markup(chat_id, message_id)
+        await answer_callback_query(callback_id, "Execution en cours...")
+
+        # Executer l'ordre
+        import json as _json
+        signal_data = {
+            **signal,
+            "reasons": _json.loads(signal.get("reasons", "[]")) if isinstance(signal.get("reasons"), str) else signal.get("reasons", []),
+        }
+        result = await execute_signal(signal_data)
+
+        # Mettre a jour le statut
+        new_status = "executed" if result["success"] else "error"
+        await update_signal_status(signal_id, new_status)
+
+        # Envoyer le resultat
+        await send_execution_result(signal_data, result)
+        logger.info(f"Signal {signal_id} execute: {result.get('success')}")
+
+    elif data.startswith("skip_"):
+        signal_id = int(data.split("_")[1])
+        await update_signal_status(signal_id, "skipped")
+        await edit_message_reply_markup(chat_id, message_id)
+        await answer_callback_query(callback_id, "Signal ignore")
+
+    return {"ok": True}
 
 
 # --- WebSocket relay MEXC temps reel ---
