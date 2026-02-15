@@ -240,7 +240,7 @@ async def register_webhook(webhook_url: str):
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{BASE_URL}/setWebhook",
-                json={"url": webhook_url, "allowed_updates": ["callback_query"]},
+                json={"url": webhook_url, "allowed_updates": ["callback_query", "message"]},
                 timeout=10,
             )
             data = resp.json()

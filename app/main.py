@@ -104,7 +104,11 @@ async def health():
     return {"status": "ok", "scanner_running": scanner.running}
 
 
-# --- Telegram Webhook : boutons EXECUTE/SKIP ---
+# --- Telegram Webhook : boutons EXECUTE/SKIP + saisie montant ---
+# Etat en attente : {chat_id: {"signal_id": int, "signal": dict}}
+pending_executions: dict = {}
+
+
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     try:
@@ -112,58 +116,157 @@ async def telegram_webhook(request: Request):
     except Exception:
         return {"ok": True}
 
+    # --- Callback de bouton (EXECUTE, SKIP, montant preset) ---
     callback = update.get("callback_query")
-    if not callback:
+    if callback:
+        callback_id = callback.get("id")
+        data = callback.get("data", "")
+        chat_id = callback.get("message", {}).get("chat", {}).get("id")
+        message_id = callback.get("message", {}).get("message_id")
+
+        if str(chat_id) != str(TELEGRAM_CHAT_ID):
+            return {"ok": True}
+
+        if data.startswith("exec_"):
+            # Etape 1 : l'utilisateur clique EXECUTE -> on demande le montant
+            signal_id = int(data.split("_")[1])
+            signal = await get_signal_by_id(signal_id)
+
+            if not signal:
+                await answer_callback_query(callback_id, "Signal introuvable")
+                return {"ok": True}
+
+            if signal["status"] == "executed":
+                await answer_callback_query(callback_id, "Deja execute !")
+                return {"ok": True}
+
+            # Retirer les boutons EXECUTE/SKIP
+            await edit_message_reply_markup(chat_id, message_id)
+            await answer_callback_query(callback_id, "Choisis le montant...")
+
+            # Stocker le signal en attente
+            import json as _json
+            signal_data = {
+                **signal,
+                "reasons": _json.loads(signal.get("reasons", "[]")) if isinstance(signal.get("reasons"), str) else signal.get("reasons", []),
+            }
+            pending_executions[str(chat_id)] = {
+                "signal_id": signal_id,
+                "signal": signal_data,
+            }
+
+            # Envoyer le message avec boutons montant + champ libre
+            from app.services.telegram_bot import send_message
+            lev = signal.get("leverage", 10)
+            await send_message(
+                f"\U0001f4b0 <b>Combien de marge veux-tu mettre ? (USDT)</b>\n\n"
+                f"\U0001f4ca {signal['symbol']} {signal['direction'].upper()} | Levier {lev}x\n"
+                f"\u2139\ufe0f 10$ de marge = {10 * lev}$ de position\n\n"
+                f"<i>Clique un montant ou tape le montant que tu veux :</i>",
+                reply_markup={
+                    "inline_keyboard": [
+                        [
+                            {"text": "5$", "callback_data": f"amt_5_{signal_id}"},
+                            {"text": "10$", "callback_data": f"amt_10_{signal_id}"},
+                            {"text": "25$", "callback_data": f"amt_25_{signal_id}"},
+                            {"text": "50$", "callback_data": f"amt_50_{signal_id}"},
+                        ],
+                        [
+                            {"text": "\u274c Annuler", "callback_data": f"cancel_{signal_id}"},
+                        ],
+                    ]
+                },
+            )
+
+        elif data.startswith("amt_"):
+            # Etape 2 : l'utilisateur clique un montant preset
+            parts = data.split("_")
+            margin_usdt = float(parts[1])
+            signal_id = int(parts[2])
+            await _execute_with_margin(str(chat_id), signal_id, margin_usdt, callback_id, message_id)
+
+        elif data.startswith("skip_"):
+            signal_id = int(data.split("_")[1])
+            await update_signal_status(signal_id, "skipped")
+            await edit_message_reply_markup(chat_id, message_id)
+            await answer_callback_query(callback_id, "Signal ignore")
+
+        elif data.startswith("cancel_"):
+            signal_id = int(data.split("_")[1])
+            pending_executions.pop(str(chat_id), None)
+            await edit_message_reply_markup(chat_id, message_id)
+            await answer_callback_query(callback_id, "Annule")
+
         return {"ok": True}
 
-    callback_id = callback.get("id")
-    data = callback.get("data", "")
-    chat_id = callback.get("message", {}).get("chat", {}).get("id")
-    message_id = callback.get("message", {}).get("message_id")
+    # --- Message texte : l'utilisateur tape un montant libre ---
+    message = update.get("message")
+    if message:
+        chat_id = str(message.get("chat", {}).get("id"))
+        text = (message.get("text") or "").strip()
 
-    # Verifier que c'est bien notre chat
-    if str(chat_id) != str(TELEGRAM_CHAT_ID):
-        return {"ok": True}
+        if chat_id != str(TELEGRAM_CHAT_ID):
+            return {"ok": True}
 
-    if data.startswith("exec_"):
-        signal_id = int(data.split("_")[1])
+        # Verifier si on attend un montant
+        if chat_id in pending_executions and text:
+            # Extraire le nombre (accepte "15", "15$", "15 usdt", "15.5")
+            import re
+            match = re.match(r"^(\d+\.?\d*)", text.replace(",", "."))
+            if match:
+                margin_usdt = float(match.group(1))
+                signal_id = pending_executions[chat_id]["signal_id"]
+                await _execute_with_margin(chat_id, signal_id, margin_usdt)
+
+    return {"ok": True}
+
+
+async def _execute_with_margin(
+    chat_id: str, signal_id: int, margin_usdt: float,
+    callback_id: str = None, message_id: int = None,
+):
+    """Execute le signal avec le montant de marge choisi."""
+    from app.services.telegram_bot import send_message, send_execution_result
+
+    # Recuperer le signal en attente
+    pending = pending_executions.pop(chat_id, None)
+    if not pending or pending["signal_id"] != signal_id:
         signal = await get_signal_by_id(signal_id)
-
         if not signal:
-            await answer_callback_query(callback_id, "Signal introuvable")
-            return {"ok": True}
-
-        if signal["status"] == "executed":
-            await answer_callback_query(callback_id, "Deja execute !")
-            return {"ok": True}
-
-        # Retirer les boutons immediatement
-        await edit_message_reply_markup(chat_id, message_id)
-        await answer_callback_query(callback_id, "Execution en cours...")
-
-        # Executer l'ordre
+            await send_message("\u274c Signal introuvable")
+            return
         import json as _json
         signal_data = {
             **signal,
             "reasons": _json.loads(signal.get("reasons", "[]")) if isinstance(signal.get("reasons"), str) else signal.get("reasons", []),
         }
-        result = await execute_signal(signal_data)
+    else:
+        signal_data = pending["signal"]
 
-        # Mettre a jour le statut
-        new_status = "executed" if result["success"] else "error"
-        await update_signal_status(signal_id, new_status)
+    # Retirer les boutons montant si c'est un callback
+    if callback_id:
+        await answer_callback_query(callback_id, f"Execution avec {margin_usdt}$ de marge...")
+    if message_id:
+        await edit_message_reply_markup(int(chat_id), message_id)
 
-        # Envoyer le resultat
-        await send_execution_result(signal_data, result)
-        logger.info(f"Signal {signal_id} execute: {result.get('success')}")
+    # Feedback immediat
+    lev = signal_data.get("leverage", 10)
+    position_usd = margin_usdt * lev
+    await send_message(
+        f"\u23f3 <b>Execution en cours...</b>\n"
+        f"Marge: {margin_usdt}$ | Position: {position_usd}$ | Levier: {lev}x"
+    )
 
-    elif data.startswith("skip_"):
-        signal_id = int(data.split("_")[1])
-        await update_signal_status(signal_id, "skipped")
-        await edit_message_reply_markup(chat_id, message_id)
-        await answer_callback_query(callback_id, "Signal ignore")
+    # Executer
+    result = await execute_signal(signal_data, margin_usdt=margin_usdt)
 
-    return {"ok": True}
+    # Mettre a jour le statut
+    new_status = "executed" if result["success"] else "error"
+    await update_signal_status(signal_id, new_status)
+
+    # Envoyer le resultat
+    await send_execution_result(signal_data, result)
+    logger.info(f"Signal {signal_id} execute avec {margin_usdt}$ marge: {result.get('success')}")
 
 
 # --- WebSocket relay MEXC temps reel ---

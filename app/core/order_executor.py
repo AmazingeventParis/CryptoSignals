@@ -12,12 +12,12 @@ logger = logging.getLogger(__name__)
 MAX_PRICE_DEVIATION_PCT = 0.3
 
 
-async def execute_signal(signal: dict) -> dict:
+async def execute_signal(signal: dict, margin_usdt: float = None) -> dict:
     """
     Execute un signal sur MEXC Futures.
     0. Verifie que le prix actuel n'a pas trop devie du signal
     1. Set leverage + margin mode
-    2. Calcule la taille de position (sur le prix actuel)
+    2. Calcule la taille de position depuis la marge choisie
     3. Place l'ordre market (entree)
     4. Place SL (stop market)
     5. Place TP1, TP2, TP3 (take profit market)
@@ -95,24 +95,38 @@ async def execute_signal(signal: dict) -> dict:
         # --- 2. Taille de position ---
         balance = await market_data.fetch_balance()
         total_balance = balance.get("free", 0)
-        if total_balance <= 0:
-            return {"success": False, "error": f"Balance insuffisante: {total_balance} USDT"}
 
-        risk_pct = 1.0  # 1% du capital par trade
-        sizing = calculate_position_size(
-            balance=total_balance,
-            risk_pct=risk_pct,
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            leverage=leverage,
-        )
-        quantity = sizing["quantity"]
+        if margin_usdt and margin_usdt > 0:
+            # Montant choisi par l'utilisateur
+            if margin_usdt > total_balance:
+                return {
+                    "success": False,
+                    "error": f"Marge demandee ({margin_usdt}$) > balance disponible ({total_balance:.2f}$)",
+                }
+            position_size_usd = margin_usdt * leverage
+            quantity = round(position_size_usd / entry_price, 6)
+            margin_required = margin_usdt
+        else:
+            # Fallback : 1% de la balance
+            if total_balance <= 0:
+                return {"success": False, "error": f"Balance insuffisante: {total_balance} USDT"}
+            sizing = calculate_position_size(
+                balance=total_balance,
+                risk_pct=1.0,
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                leverage=leverage,
+            )
+            quantity = sizing["quantity"]
+            position_size_usd = sizing["position_size_usd"]
+            margin_required = sizing["margin_required"]
+
         if quantity <= 0:
             return {"success": False, "error": "Quantite calculee = 0"}
 
         logger.info(
             f"Position: {quantity} {symbol.split('/')[0]} "
-            f"({sizing['position_size_usd']}$ / marge {sizing['margin_required']}$)"
+            f"({position_size_usd}$ / marge {margin_required}$)"
         )
 
         # --- 3. Ordre d'entree (market) ---
@@ -176,8 +190,8 @@ async def execute_signal(signal: dict) -> dict:
             "sl_order_id": sl_order_id,
             "tp_order_ids": tp_order_ids,
             "quantity": quantity,
-            "position_size_usd": sizing["position_size_usd"],
-            "margin_required": sizing["margin_required"],
+            "position_size_usd": round(position_size_usd, 2),
+            "margin_required": round(margin_required, 2),
             "balance": total_balance,
         }
 
