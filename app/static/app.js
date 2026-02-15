@@ -1135,24 +1135,38 @@ function initPopupChart() {
         visible: popupShowVol,
     });
 
-    // --- Selection Zoom (drag rectangle to zoom) ---
+    // --- Selection Zoom (double-clic pour activer, drag rectangle, zoom) ---
     const selCanvas = document.createElement('canvas');
     selCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:5;';
     container.appendChild(selCanvas);
+    let zoomMode = false;
     let selStart = null;
     let selRect = null;
 
-    container.addEventListener('mousedown', (e) => {
-        if (e.button !== 0 || e.shiftKey === false) return; // Shift+click pour selection
-        selStart = { x: e.offsetX, y: e.offsetY };
+    // Bandeau indicateur zoom mode
+    const zoomBanner = document.createElement('div');
+    zoomBanner.style.cssText = 'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:6;background:rgba(88,166,255,0.9);color:#000;padding:4px 16px;border-radius:6px;font-size:12px;font-weight:700;display:none;pointer-events:none;';
+    zoomBanner.textContent = 'MODE ZOOM — Dessinez un rectangle';
+    container.appendChild(zoomBanner);
+
+    container.addEventListener('dblclick', (e) => {
+        zoomMode = true;
+        container.style.cursor = 'crosshair';
+        zoomBanner.style.display = 'block';
         selCanvas.width = container.clientWidth;
         selCanvas.height = container.clientHeight;
         selCanvas.style.pointerEvents = 'auto';
-        e.preventDefault();
     });
 
-    container.addEventListener('mousemove', (e) => {
-        if (!selStart) return;
+    selCanvas.addEventListener('mousedown', (e) => {
+        if (!zoomMode) return;
+        selStart = { x: e.offsetX, y: e.offsetY };
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    selCanvas.addEventListener('mousemove', (e) => {
+        if (!zoomMode || !selStart) return;
         selRect = {
             x: Math.min(selStart.x, e.offsetX),
             y: Math.min(selStart.y, e.offsetY),
@@ -1164,30 +1178,46 @@ function initPopupChart() {
         ctx.fillStyle = 'rgba(88, 166, 255, 0.15)';
         ctx.fillRect(selRect.x, selRect.y, selRect.w, selRect.h);
         ctx.strokeStyle = 'rgba(88, 166, 255, 0.6)';
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 3]);
         ctx.strokeRect(selRect.x, selRect.y, selRect.w, selRect.h);
+        ctx.setLineDash([]);
     });
 
-    container.addEventListener('mouseup', (e) => {
-        if (!selStart || !selRect || selRect.w < 20) {
-            selStart = null; selRect = null;
-            const ctx = selCanvas.getContext('2d');
-            ctx.clearRect(0, 0, selCanvas.width, selCanvas.height);
-            selCanvas.style.pointerEvents = 'none';
-            return;
+    selCanvas.addEventListener('mouseup', (e) => {
+        if (!zoomMode) return;
+        if (selStart && selRect && selRect.w > 20) {
+            const ts = popupChart.timeScale();
+            const leftTime = ts.coordinateToTime(selRect.x);
+            const rightTime = ts.coordinateToTime(selRect.x + selRect.w);
+            if (leftTime && rightTime) {
+                ts.setVisibleRange({ from: leftTime, to: rightTime });
+            }
+            setTimeout(() => drawPopupFVG(), 50);
         }
-        // Calculer la plage de temps visible correspondant a la selection
-        const ts = popupChart.timeScale();
-        const leftTime = ts.coordinateToTime(selRect.x);
-        const rightTime = ts.coordinateToTime(selRect.x + selRect.w);
-        if (leftTime && rightTime) {
-            ts.setVisibleRange({ from: leftTime, to: rightTime });
-        }
-        selStart = null; selRect = null;
+        // Quitter le mode zoom
+        zoomMode = false;
+        selStart = null;
+        selRect = null;
+        container.style.cursor = '';
+        zoomBanner.style.display = 'none';
         const ctx = selCanvas.getContext('2d');
         ctx.clearRect(0, 0, selCanvas.width, selCanvas.height);
         selCanvas.style.pointerEvents = 'none';
-        setTimeout(() => drawPopupFVG(), 50);
+    });
+
+    // Escape pour quitter le mode zoom
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && zoomMode) {
+            zoomMode = false;
+            selStart = null;
+            selRect = null;
+            container.style.cursor = '';
+            zoomBanner.style.display = 'none';
+            const ctx = selCanvas.getContext('2d');
+            ctx.clearRect(0, 0, selCanvas.width, selCanvas.height);
+            selCanvas.style.pointerEvents = 'none';
+        }
     });
 
     popupFvgCanvas = document.createElement('canvas');

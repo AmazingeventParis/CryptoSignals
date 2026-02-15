@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=37">
+    <link rel="stylesheet" href="/static/style.css?v=38">
 </head>
 <body>
     <div id="app">
@@ -154,7 +154,7 @@
                         <button id="popup-vol-toggle" class="popup-tf-btn" onclick="popupToggleVolume()" style="margin-left:8px;border-color:var(--blue)">VOL</button>
                         <button id="popup-fvg-toggle" class="popup-tf-btn" onclick="popupToggleFVG()" style="border-color:var(--green)">FVG</button>
                         <button class="popup-tf-btn" onclick="popupResetZoom()" style="margin-left:8px;border-color:var(--orange);color:var(--orange)">&#x1f50d; Reset</button>
-                        <span style="font-size:10px;color:var(--text-secondary);margin-left:6px">Shift+drag = zoom</span>
+                        <span style="font-size:10px;color:var(--text-secondary);margin-left:6px">Double-clic = zoom</span>
                     </div>
                 </div>
                 <div id="popup-chart-container" class="popup-chart-container"></div>
@@ -177,6 +177,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=37"></script>
+    <script src="/static/app.js?v=38"></script>
 </body>
 </html>
