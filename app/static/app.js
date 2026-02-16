@@ -2051,10 +2051,10 @@ function renderCompareChart(v1Data, v2Data, ftData, v1Base, v2Base) {
         priceFormat: { type: 'custom', formatter: (p) => '$' + p.toFixed(2) },
     });
 
-    // FT line (orange)
+    // FT line (orange vif)
     compareFtSeries = compareChart.addLineSeries({
-        color: '#d29922',
-        lineWidth: 2,
+        color: '#f0883e',
+        lineWidth: 3,
         title: 'FT',
         priceFormat: { type: 'custom', formatter: (p) => '$' + p.toFixed(2) },
     });
@@ -2091,6 +2091,7 @@ function renderCompareChart(v1Data, v2Data, ftData, v1Base, v2Base) {
     if (v1Points.length) compareV1Series.setData(v1Points);
     if (v2Points.length) compareV2Series.setData(v2Points);
     if (ftPoints.length) compareFtSeries.setData(ftPoints);
+    console.log('Compare chart data:', {v1: v1Points.length, v2: v2Points.length, ft: ftPoints.length});
 
     // Baseline: ligne plate a 100$ sur toute la plage
     const allTimes = [...v1Points, ...v2Points, ...ftPoints].map(p => p.time).filter(Boolean);
