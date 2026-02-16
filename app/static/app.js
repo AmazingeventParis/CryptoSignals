@@ -589,6 +589,75 @@ async function loadChart() {
     }
 }
 
+// --- Refresh chart sans reset zoom (pour countdown new candle) ---
+async function refreshChartCandles() {
+    if (!selectedPair || !chartInstance || !candleSeries) return;
+    try {
+        const sym = selectedPair.replace('/', '-');
+        const res = await fetch(`${API}/api/ohlcv/${sym}?timeframe=${selectedTimeframe}&limit=10`);
+        const data = await res.json();
+        const candles = data.candles || [];
+        if (!candles.length) return;
+
+        const tzOffset = new Date().getTimezoneOffset() * -60;
+        const newCandles = candles.map(c => ({
+            time: c.time + tzOffset,
+            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+        }));
+
+        // update() ajoute ou met a jour sans toucher au zoom
+        newCandles.forEach(c => {
+            candleSeries.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+            volumeSeries.update({ time: c.time, value: c.volume, color: c.close >= c.open ? 'rgba(63,185,80,0.5)' : 'rgba(248,81,73,0.5)' });
+        });
+
+        // Ajouter les nouvelles bougies a lastCandles pour FVG
+        newCandles.forEach(nc => {
+            const idx = lastCandles.findIndex(lc => lc.time === nc.time);
+            if (idx >= 0) {
+                lastCandles[idx] = nc;
+            } else {
+                lastCandles.push(nc);
+            }
+        });
+    } catch (e) {
+        console.error('refreshChartCandles error:', e);
+    }
+}
+
+async function refreshPopupChartCandles() {
+    if (!popupPair || !popupChart || !popupCandleSeries) return;
+    try {
+        const sym = popupPair.replace('/', '-');
+        const res = await fetch(`${API}/api/ohlcv/${sym}?timeframe=${popupTimeframe}&limit=10`);
+        const data = await res.json();
+        const candles = data.candles || [];
+        if (!candles.length) return;
+
+        const tzOffset = new Date().getTimezoneOffset() * -60;
+        const newCandles = candles.map(c => ({
+            time: c.time + tzOffset,
+            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+        }));
+
+        newCandles.forEach(c => {
+            popupCandleSeries.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+            popupVolumeSeries.update({ time: c.time, value: c.volume, color: c.close >= c.open ? 'rgba(63,185,80,0.5)' : 'rgba(248,81,73,0.5)' });
+        });
+
+        newCandles.forEach(nc => {
+            const idx = popupLastCandles.findIndex(lc => lc.time === nc.time);
+            if (idx >= 0) {
+                popupLastCandles[idx] = nc;
+            } else {
+                popupLastCandles.push(nc);
+            }
+        });
+    } catch (e) {
+        console.error('refreshPopupChartCandles error:', e);
+    }
+}
+
 // --- Utils ---
 function getDecimals(price) {
     if (!price) return 4;
@@ -843,11 +912,9 @@ function updateCandleCountdown() {
         mainEl.textContent = formatCountdown(remaining);
         mainEl.style.color = remaining < 10000 ? 'var(--red)' : remaining < 30000 ? 'var(--orange)' : 'var(--text-secondary)';
 
-        // Nouvelle bougie detectee -> attendre 2s puis recharger + reconnecter WS
+        // Nouvelle bougie detectee -> attendre 2s puis rafraichir sans reset zoom
         if (lastMainPeriod > 0 && currentPeriod !== lastMainPeriod) {
-            setTimeout(() => {
-                loadChart(); // reconnecte le WS aussi
-            }, 2000);
+            setTimeout(() => refreshChartCandles(), 2000);
         }
         lastMainPeriod = currentPeriod;
     }
@@ -862,11 +929,9 @@ function updateCandleCountdown() {
         popupEl.textContent = formatCountdown(remaining);
         popupEl.style.color = remaining < 10000 ? 'var(--red)' : remaining < 30000 ? 'var(--orange)' : 'var(--text-secondary)';
 
-        // Nouvelle bougie detectee -> attendre 2s puis recharger popup
+        // Nouvelle bougie detectee -> attendre 2s puis rafraichir sans reset zoom
         if (lastPopupPeriod > 0 && currentPeriod !== lastPopupPeriod) {
-            setTimeout(() => {
-                loadPopupChart();
-            }, 2000);
+            setTimeout(() => refreshPopupChartCandles(), 2000);
         }
         lastPopupPeriod = currentPeriod;
     }
