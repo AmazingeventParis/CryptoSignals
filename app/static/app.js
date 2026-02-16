@@ -1922,10 +1922,10 @@ function renderFreqtradeTrades(trades) {
 async function loadCompareData() {
     try {
         const [v1Hist, v2Hist, v1Port, v2Port, ftStats, ftTrades] = await Promise.all([
-            fetch(`${API}/api/pnl-history?bot_version=V1&days=${comparePeriod}`).then(r => r.json()),
-            fetch(`${API}/api/pnl-history?bot_version=V2&days=${comparePeriod}`).then(r => r.json()),
-            fetch(`${API}/api/paper/portfolio?bot_version=V1`).then(r => r.json()),
-            fetch(`${API}/api/paper/portfolio?bot_version=V2`).then(r => r.json()),
+            fetch(`${API}/api/pnl-history?bot_version=V1&days=${comparePeriod}`).then(r => r.json()).catch(() => ({ history: [] })),
+            fetch(`${API}/api/pnl-history?bot_version=V2&days=${comparePeriod}`).then(r => r.json()).catch(() => ({ history: [] })),
+            fetch(`${API}/api/paper/portfolio?bot_version=V1`).then(r => r.json()).catch(() => ({})),
+            fetch(`${API}/api/paper/portfolio?bot_version=V2`).then(r => r.json()).catch(() => ({})),
             fetch(`${API}/api/freqtrade/stats`).then(r => r.json()).catch(() => ({})),
             fetch(`${API}/api/freqtrade/trades?limit=200`).then(r => r.json()).catch(() => ({ trades: [] })),
         ]);
@@ -1934,7 +1934,19 @@ async function loadCompareData() {
         updateCompareFtStats(ftStats);
 
         // Reconstruire l'historique P&L FT depuis les trades fermes
-        const ftHistory = buildFtPnlHistory(ftTrades.trades || [], ftStats.balance || 0, ftStats.total_pnl || 0);
+        let ftHistory = [];
+        try {
+            ftHistory = buildFtPnlHistory(ftTrades.trades || [], ftStats.balance || 0, ftStats.total_pnl || 0);
+        } catch (e) {
+            console.error('buildFtPnlHistory error:', e);
+        }
+
+        console.log('Compare data loaded:', {
+            v1Hist: (v1Hist.history || []).length,
+            v2Hist: (v2Hist.history || []).length,
+            ftHist: ftHistory.length,
+            ftTrades: (ftTrades.trades || []).length,
+        });
 
         renderCompareChart(
             v1Hist.history || [], v2Hist.history || [], ftHistory,
@@ -2090,8 +2102,12 @@ function renderCompareChart(v1Data, v2Data, ftData, v1Base, v2Base) {
 
     if (v1Points.length) compareV1Series.setData(v1Points);
     if (v2Points.length) compareV2Series.setData(v2Points);
-    if (ftPoints.length) compareFtSeries.setData(ftPoints);
-    console.log('Compare chart data:', {v1: v1Points.length, v2: v2Points.length, ft: ftPoints.length});
+    try {
+        if (ftPoints.length) compareFtSeries.setData(ftPoints);
+    } catch (e) {
+        console.error('FT setData error:', e, ftPoints);
+    }
+    console.log('Compare chart points:', {v1: v1Points.length, v2: v2Points.length, ft: ftPoints.length, ftSample: ftPoints.slice(0, 3)});
 
     // Baseline: ligne plate a 100$ sur toute la plage
     const allTimes = [...v1Points, ...v2Points, ...ftPoints].map(p => p.time).filter(Boolean);
