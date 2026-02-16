@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=58">
+    <link rel="stylesheet" href="/static/style.css?v=59">
 </head>
 <body>
     <div id="app">
@@ -208,7 +208,10 @@
                         <span style="font-size:10px;color:var(--text-secondary);margin-left:6px">Double-clic = zoom</span>
                     </div>
                 </div>
-                <div id="popup-chart-container" class="popup-chart-container"></div>
+                <div class="popup-chart-wrapper">
+                    <div id="popup-chart-container" class="popup-chart-container"></div>
+                    <div id="popup-levels-panel" class="popup-levels-panel"></div>
+                </div>
             </div>
         </div>
 
@@ -228,6 +231,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=58"></script>
+    <script src="/static/app.js?v=59"></script>
 </body>
 </html>

@@ -1287,10 +1287,13 @@ function initPopupChart() {
     container.style.position = 'relative';
     container.appendChild(popupFvgCanvas);
 
-    // Boucle rAF continue pour redessiner FVG popup en temps reel
+    // Boucle rAF continue pour redessiner FVG + panneau niveaux
     function popupFvgLoop() {
         const modal = document.getElementById('chart-modal');
-        if (popupChart && popupShowFVG && modal && modal.style.display !== 'none') drawPopupFVG();
+        if (popupChart && modal && modal.style.display !== 'none') {
+            if (popupShowFVG) drawPopupFVG();
+            updatePopupLevelsPanel();
+        }
         requestAnimationFrame(popupFvgLoop);
     }
     requestAnimationFrame(popupFvgLoop);
@@ -1350,19 +1353,19 @@ async function loadPopupChart() {
         });
         popupLevelLines = [];
 
-        // Ligne d'entree (bleu pointille) avec label sur l'axe
+        // Ligne d'entree (bleu pointille) - pas de label sur l'axe principal
         if (popupEntryPrice) {
             popupEntryLine = popupCandleSeries.createPriceLine({
                 price: popupEntryPrice,
                 color: '#58a6ff',
                 lineWidth: 2,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
-                axisLabelVisible: true,
-                title: popupDirection === 'short' ? 'SHORT' : 'LONG',
+                axisLabelVisible: false,
+                title: '',
             });
         }
 
-        // Lignes SL / TP1 / TP2 / TP3
+        // Lignes SL / TP1 / TP2 / TP3 - pas de label sur l'axe principal
         if (popupLevels) {
             const levels = [
                 { key: 'sl',  label: 'SL',  color: '#f85149', width: 2, style: LightweightCharts.LineStyle.Solid },
@@ -1378,11 +1381,14 @@ async function loadPopupChart() {
                     color: lv.color,
                     lineWidth: lv.width,
                     lineStyle: lv.style,
-                    axisLabelVisible: true,
-                    title: lv.label,
+                    axisLabelVisible: false,
+                    title: '',
                 }));
             });
         }
+
+        // Mettre a jour le panneau des niveaux
+        updatePopupLevelsPanel();
 
 
         popupChart.timeScale().fitContent();
@@ -1391,6 +1397,35 @@ async function loadPopupChart() {
     } catch (e) {
         console.error('Popup chart error:', e);
     }
+}
+
+function updatePopupLevelsPanel() {
+    const panel = document.getElementById('popup-levels-panel');
+    if (!panel || !popupCandleSeries || !popupChart) { if (panel) panel.innerHTML = ''; return; }
+
+    const dec = getDecimals(popupEntryPrice || 1);
+    const allLevels = [];
+
+    if (popupEntryPrice) {
+        allLevels.push({ label: popupDirection === 'short' ? 'SHORT' : 'LONG', price: popupEntryPrice, color: '#58a6ff', bg: 'rgba(88,166,255,0.15)' });
+    }
+    if (popupLevels) {
+        if (popupLevels.sl) allLevels.push({ label: 'SL', price: popupLevels.sl, color: '#f85149', bg: 'rgba(248,81,73,0.15)' });
+        if (popupLevels.tp1) allLevels.push({ label: 'TP1', price: popupLevels.tp1, color: '#3fb950', bg: 'rgba(63,185,80,0.15)' });
+        if (popupLevels.tp2) allLevels.push({ label: 'TP2', price: popupLevels.tp2, color: '#3fb950', bg: 'rgba(63,185,80,0.15)' });
+        if (popupLevels.tp3) allLevels.push({ label: 'TP3', price: popupLevels.tp3, color: '#d2992a', bg: 'rgba(210,153,34,0.15)' });
+    }
+
+    if (!allLevels.length) { panel.innerHTML = ''; return; }
+
+    panel.innerHTML = allLevels.map(lv => {
+        const y = popupCandleSeries.priceToCoordinate(lv.price);
+        if (y === null) return '';
+        return `<div class="popup-level-label" style="top:${y}px;background:${lv.bg};color:${lv.color};border:1px solid ${lv.color}">
+            <span class="lvl-name">${lv.label}</span>
+            <span class="lvl-price">${lv.price.toFixed(dec)}</span>
+        </div>`;
+    }).join('');
 }
 
 function popupChangeTimeframe(tf) {

@@ -382,10 +382,49 @@ body {
 }
 .popup-tf-btn:hover { color: var(--text); }
 .popup-tf-btn.active { background: var(--bg-card); color: var(--text); border-color: var(--blue); }
+.popup-chart-wrapper {
+    display: flex;
+    width: 100%;
+    height: 480px;
+}
 .popup-chart-container {
-    width: 100%; height: 480px;
+    flex: 1; height: 100%;
     background: var(--bg-card);
     position: relative;
+}
+.popup-levels-panel {
+    width: 56px;
+    min-width: 56px;
+    height: 100%;
+    background: #0d1117;
+    border-left: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+}
+.popup-level-label {
+    position: absolute;
+    right: 2px;
+    transform: translateY(-50%);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 4px;
+    border-radius: 3px;
+    white-space: nowrap;
+    font-family: monospace;
+    line-height: 1.2;
+    text-align: center;
+    min-width: 50px;
+}
+.popup-level-label .lvl-name {
+    font-size: 9px;
+    font-weight: 600;
+    display: block;
+    opacity: 0.85;
+}
+.popup-level-label .lvl-price {
+    font-size: 10px;
+    font-weight: 700;
+    display: block;
 }
 
 /* ============================================
