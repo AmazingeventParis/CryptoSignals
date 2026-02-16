@@ -5,7 +5,6 @@ Verifie le prix actuel, puis: Entree market + Stop Loss + Take Profits (3 niveau
 import logging
 from app.core.market_data import market_data
 from app.core.risk_manager import calculate_position_size
-from app.core.position_monitor import position_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +12,7 @@ logger = logging.getLogger(__name__)
 MAX_PRICE_DEVIATION_PCT = 0.3
 
 
-async def execute_signal(signal: dict, margin_usdt: float = None, order_type: str = "market") -> dict:
+async def execute_signal(signal: dict, margin_usdt: float = None, order_type: str = "market", position_monitor=None) -> dict:
     """
     Execute un signal sur MEXC Futures.
     0. Verifie le prix actuel
@@ -221,18 +220,19 @@ async def execute_signal(signal: dict, margin_usdt: float = None, order_type: st
         }
 
         # Enregistrer pour le position monitor (trailing stop)
-        try:
-            signal_for_monitor = {
-                **signal,
-                "entry_price": actual_entry,
-                "stop_loss": stop_loss,
-                "tp1": tp1,
-                "tp2": tp2,
-                "tp3": tp3,
-            }
-            await position_monitor.register_trade(signal_for_monitor, result_dict)
-        except Exception as e:
-            logger.error(f"Erreur register position: {e}")
+        if position_monitor:
+            try:
+                signal_for_monitor = {
+                    **signal,
+                    "entry_price": actual_entry,
+                    "stop_loss": stop_loss,
+                    "tp1": tp1,
+                    "tp2": tp2,
+                    "tp3": tp3,
+                }
+                await position_monitor.register_trade(signal_for_monitor, result_dict)
+            except Exception as e:
+                logger.error(f"Erreur register position: {e}")
 
         return result_dict
 

@@ -394,7 +394,9 @@ async def _do_execute(
         await send_message("\U0001f9ea <b>SIMULATION</b> - Aucun ordre place")
         return
 
-    result = await execute_signal(signal_data, margin_usdt=margin_usdt, order_type=order_type)
+    bv = signal_data.get("bot_version", "V2")
+    pm = bot_instances.get(bv, bot_instances["V2"])["position_monitor"]
+    result = await execute_signal(signal_data, margin_usdt=margin_usdt, order_type=order_type, position_monitor=pm)
 
     new_status = "executed" if result["success"] else "error"
     await update_signal_status(signal_id, new_status)
