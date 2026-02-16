@@ -2,6 +2,7 @@
 API REST endpoints.
 """
 import asyncio
+import httpx
 from fastapi import APIRouter, Query
 from app.database import get_signals, get_trades, get_stats, get_active_positions
 from app.core.scanner import scanner
@@ -10,6 +11,10 @@ from app.config import get_enabled_pairs, SETTINGS, APP_MODE, reload_settings, g
 from app.core.signal_engine import analyze_pair
 
 router = APIRouter(prefix="/api")
+
+# --- Freqtrade proxy config ---
+FT_URL = "https://freqtrade.swipego.app"
+FT_AUTH = ("admin", "Laurytal2")
 
 
 @router.get("/status")
@@ -465,3 +470,93 @@ async def send_test_signal():
     await send_signal(result)
 
     return {"status": "ok", "message": f"Signal {result['direction'].upper()} {symbol}", "signal_id": signal_id}
+
+
+# ============================================================
+# FREQTRADE PROXY ENDPOINTS
+# ============================================================
+
+@router.get("/freqtrade/openTrades")
+async def ft_open_trades():
+    """Trades ouverts sur Freqtrade."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{FT_URL}/api/v1/status", auth=FT_AUTH)
+            trades = r.json()
+        result = []
+        for t in trades:
+            is_short = t.get("is_short", False)
+            result.append({
+                "id": f"ft_{t['trade_id']}",
+                "symbol": t.get("pair", ""),
+                "direction": "short" if is_short else "long",
+                "entry_price": t.get("open_rate", 0),
+                "current_price": t.get("current_rate", 0),
+                "pnl_usd": t.get("profit_abs", 0),
+                "pnl_pct": t.get("profit_pct", 0),
+                "stoploss": t.get("stop_loss_abs", 0),
+                "stake_amount": t.get("stake_amount", 0),
+                "open_date": t.get("open_date_hum", ""),
+                "strategy": t.get("strategy", ""),
+                "timeframe": t.get("timeframe", "5m"),
+            })
+        return {"trades": result, "count": len(result)}
+    except Exception as e:
+        return {"trades": [], "count": 0, "error": str(e)}
+
+
+@router.get("/freqtrade/trades")
+async def ft_closed_trades(limit: int = Query(50, ge=1, le=200)):
+    """Historique des trades fermes Freqtrade."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{FT_URL}/api/v1/trades", params={"limit": limit}, auth=FT_AUTH)
+            data = r.json()
+        result = []
+        for t in data.get("trades", []):
+            is_short = t.get("is_short", False)
+            result.append({
+                "id": f"ft_{t['trade_id']}",
+                "symbol": t.get("pair", ""),
+                "direction": "short" if is_short else "long",
+                "entry_price": t.get("open_rate", 0),
+                "exit_price": t.get("close_rate", 0),
+                "pnl_usd": t.get("profit_abs", 0),
+                "pnl_pct": t.get("profit_pct", 0),
+                "result": "win" if (t.get("profit_abs", 0) or 0) > 0 else "loss",
+                "open_date": t.get("open_date_hum", ""),
+                "close_date": t.get("close_date_hum", ""),
+                "duration": t.get("trade_duration", ""),
+                "strategy": t.get("strategy", ""),
+                "close_reason": t.get("exit_reason", ""),
+            })
+        return {"trades": result, "count": len(result), "total": data.get("total_trades", 0)}
+    except Exception as e:
+        return {"trades": [], "count": 0, "error": str(e)}
+
+
+@router.get("/freqtrade/stats")
+async def ft_stats():
+    """Stats globales Freqtrade (profit + balance)."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r_profit = await client.get(f"{FT_URL}/api/v1/profit", auth=FT_AUTH)
+            r_balance = await client.get(f"{FT_URL}/api/v1/balance", auth=FT_AUTH)
+            profit = r_profit.json()
+            balance = r_balance.json()
+        return {
+            "balance": balance.get("total_bot", 0),
+            "total_pnl": profit.get("profit_all_coin", 0),
+            "closed_pnl": profit.get("profit_closed_coin", 0),
+            "trade_count": profit.get("trade_count", 0),
+            "closed_trades": profit.get("closed_trade_count", 0),
+            "wins": profit.get("winning_trades", 0),
+            "losses": profit.get("losing_trades", 0),
+            "win_rate": round(profit.get("winrate", 0) * 100, 1),
+            "best_pair": profit.get("best_pair", ""),
+            "avg_duration": profit.get("avg_duration", "0:00:00"),
+            "drawdown": round(profit.get("max_drawdown", 0) * 100, 2),
+            "bot_running": True,
+        }
+    except Exception as e:
+        return {"balance": 0, "total_pnl": 0, "trade_count": 0, "wins": 0, "losses": 0, "win_rate": 0, "bot_running": False, "error": str(e)}

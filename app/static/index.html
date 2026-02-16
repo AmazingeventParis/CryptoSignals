@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=38">
+    <link rel="stylesheet" href="/static/style.css?v=43">
 </head>
 <body>
     <div id="app">
@@ -55,6 +55,32 @@
                     <div class="stat-label">Trades</div>
                 </div>
             </div>
+
+            <!-- Freqtrade Stats -->
+            <div class="ft-stats-section">
+                <div class="ft-stats-header">
+                    <span class="ft-badge">FT</span> Freqtrade
+                    <span id="ft-status" class="ft-status offline">offline</span>
+                </div>
+                <div class="stats-row">
+                    <div class="stat-card">
+                        <div class="stat-value" id="ft-balance">$0</div>
+                        <div class="stat-label">Balance</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="ft-pnl">$0</div>
+                        <div class="stat-label">P&L</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="ft-winrate">0%</div>
+                        <div class="stat-label">Win Rate</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="ft-trades">0</div>
+                        <div class="stat-label">Trades</div>
+                    </div>
+                </div>
+            </div>
         </aside>
 
         <!-- MAIN CONTENT (droite sur desktop) -->
@@ -65,6 +91,7 @@
                 <button class="tab" onclick="switchTab('charts')">Charts</button>
                 <button class="tab" onclick="switchTab('trades')">Journal</button>
                 <button class="tab" onclick="switchTab('pairs')">Paires</button>
+                <button class="tab" onclick="switchTab('freqtrade')"><span class="ft-badge-sm">FT</span> Freqtrade</button>
             </div>
 
             <!-- Positions actives (live) - au-dessus des tabs content -->
@@ -107,6 +134,18 @@
             <div id="tab-trades" class="tab-content">
                 <div id="trades-list" class="trades-list">
                     <div class="empty-state">Aucun trade enregistre</div>
+                </div>
+            </div>
+
+            <!-- Freqtrade Tab -->
+            <div id="tab-freqtrade" class="tab-content">
+                <div id="ft-open-trades" class="ft-section">
+                    <div class="ft-section-title"><span class="dot dot-green"></span> Positions ouvertes</div>
+                    <div id="ft-open-list"></div>
+                </div>
+                <div id="ft-closed-trades" class="ft-section">
+                    <div class="ft-section-title">Historique des trades</div>
+                    <div id="ft-closed-list"></div>
                 </div>
             </div>
 
@@ -177,6 +216,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=42"></script>
+    <script src="/static/app.js?v=43"></script>
 </body>
 </html>

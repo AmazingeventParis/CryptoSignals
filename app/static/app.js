@@ -46,6 +46,7 @@ async function refreshAll() {
         fetchTrades(),
         fetchBalance(),
         fetchLivePositions(),
+        fetchFreqtradeData(),
     ]);
 }
 
@@ -1438,3 +1439,122 @@ document.addEventListener('keydown', (e) => {
 });
 
 // PWA desactive - pas de Service Worker (evite les problemes de cache)
+
+// ============================================================
+// FREQTRADE INTEGRATION
+// ============================================================
+
+async function fetchFreqtradeData() {
+    try {
+        const [statsRes, openRes, tradesRes] = await Promise.all([
+            fetch(`${API}/api/freqtrade/stats`),
+            fetch(`${API}/api/freqtrade/openTrades`),
+            fetch(`${API}/api/freqtrade/trades`),
+        ]);
+        const stats = await statsRes.json();
+        const open = await openRes.json();
+        const trades = await tradesRes.json();
+
+        updateFreqtradeStats(stats);
+        renderFreqtradeOpen(open.trades || []);
+        renderFreqtradeTrades(trades.trades || []);
+    } catch (e) {
+        console.error('Freqtrade fetch error:', e);
+        updateFreqtradeStats({ bot_running: false });
+    }
+}
+
+function updateFreqtradeStats(stats) {
+    const statusEl = document.getElementById('ft-status');
+    if (stats.bot_running) {
+        statusEl.textContent = 'running';
+        statusEl.className = 'ft-status online';
+    } else {
+        statusEl.textContent = 'offline';
+        statusEl.className = 'ft-status offline';
+    }
+
+    const bal = stats.balance || 0;
+    const balEl = document.getElementById('ft-balance');
+    balEl.textContent = `$${bal.toFixed(2)}`;
+    balEl.style.color = bal >= 99 ? 'var(--green)' : 'var(--red)';
+
+    const pnl = stats.total_pnl || 0;
+    const pnlEl = document.getElementById('ft-pnl');
+    pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+    pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+    document.getElementById('ft-winrate').textContent = `${stats.win_rate || 0}%`;
+    document.getElementById('ft-trades').textContent = stats.trade_count || 0;
+}
+
+function renderFreqtradeOpen(trades) {
+    const container = document.getElementById('ft-open-list');
+    if (!trades.length) {
+        container.innerHTML = '<div class="ft-empty">Aucune position ouverte</div>';
+        return;
+    }
+    container.innerHTML = trades.map(t => {
+        const pnl = t.pnl_usd || 0;
+        const pnlPct = t.pnl_pct || 0;
+        const isProfit = pnl >= 0;
+        const cls = isProfit ? 'ft-profit' : 'ft-loss';
+        const pnlCls = isProfit ? 'up' : 'down';
+        const sym = t.symbol.replace(':USDT', '').replace('/USDT', '');
+        return `
+        <div class="ft-card ${cls}">
+            <div class="ft-card-header">
+                <div class="ft-card-symbol">
+                    <span class="ft-badge">FT</span>
+                    ${sym}
+                    <span class="ft-dir ${t.direction}">${t.direction}</span>
+                </div>
+                <div class="ft-card-pnl ${pnlCls}">
+                    ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
+                    <span style="font-size:12px">(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)</span>
+                </div>
+            </div>
+            <div class="ft-card-body">
+                <div>Entree<br><span class="val">${t.entry_price}</span></div>
+                <div>Actuel<br><span class="val" style="color:${isProfit ? 'var(--green)' : 'var(--red)'}">${t.current_price}</span></div>
+                <div>Mise<br><span class="val">$${(t.stake_amount || 0).toFixed(2)}</span></div>
+            </div>
+            <div class="ft-reason">${t.strategy} &middot; ${t.timeframe} &middot; ${t.open_date}</div>
+        </div>`;
+    }).join('');
+}
+
+function renderFreqtradeTrades(trades) {
+    const container = document.getElementById('ft-closed-list');
+    if (!trades.length) {
+        container.innerHTML = '<div class="ft-empty">Aucun trade ferme</div>';
+        return;
+    }
+    container.innerHTML = trades.map(t => {
+        const pnl = t.pnl_usd || 0;
+        const isProfit = pnl >= 0;
+        const cls = isProfit ? 'ft-profit' : 'ft-loss';
+        const pnlCls = isProfit ? 'up' : 'down';
+        const sym = t.symbol.replace(':USDT', '').replace('/USDT', '');
+        return `
+        <div class="ft-card ${cls}">
+            <div class="ft-card-header">
+                <div class="ft-card-symbol">
+                    <span class="ft-badge">FT</span>
+                    ${sym}
+                    <span class="ft-dir ${t.direction}">${t.direction}</span>
+                </div>
+                <div class="ft-card-pnl ${pnlCls}">
+                    ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
+                    <span style="font-size:12px">(${(t.pnl_pct || 0) >= 0 ? '+' : ''}${(t.pnl_pct || 0).toFixed(2)}%)</span>
+                </div>
+            </div>
+            <div class="ft-card-body">
+                <div>Entree<br><span class="val">${t.entry_price}</span></div>
+                <div>Sortie<br><span class="val">${t.exit_price || '-'}</span></div>
+                <div>Raison<br><span class="val" style="font-size:11px">${t.close_reason || '-'}</span></div>
+            </div>
+            <div class="ft-reason">${t.strategy} &middot; ${t.open_date} &rarr; ${t.close_date || '?'}</div>
+        </div>`;
+    }).join('');
+}
