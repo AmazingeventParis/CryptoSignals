@@ -1085,6 +1085,7 @@ let popupDirection = null;
 let popupEntryLine = null;
 let popupLevelLines = [];
 let popupLevels = null; // {sl, tp1, tp2, tp3}
+let popupLevelSeries = null; // invisible series on 2nd price scale for SL/TP labels
 
 // --- Drag modal chart ---
 function initDragModal() {
@@ -1160,6 +1161,8 @@ function closeChartModal() {
         popupChart = null;
         popupCandleSeries = null;
         popupVolumeSeries = null;
+        popupLevelSeries = null;
+        popupLevelLines = [];
     }
     if (popupFvgCanvas) {
         popupFvgCanvas.remove();
@@ -1203,6 +1206,20 @@ function initPopupChart() {
         drawTicks: false,
         borderVisible: false,
         visible: false,
+    });
+
+    // Série invisible sur 2ème échelle de prix pour labels SL/TP
+    popupLevelSeries = popupChart.addLineSeries({
+        priceScaleId: 'levels',
+        lineWidth: 0,
+        visible: false,
+        lastValueVisible: false,
+        priceLineVisible: false,
+    });
+    popupChart.priceScale('levels').applyOptions({
+        scaleMargins: { top: 0.05, bottom: 0.25 },
+        borderColor: '#30363d',
+        visible: true,
     });
 
     // --- Selection Zoom (double-clic → dessiner rectangle → zoom) ---
@@ -1343,63 +1360,69 @@ async function loadPopupChart() {
             popupCandleSeries.removePriceLine(popupEntryLine);
             popupEntryLine = null;
         }
-        popupLevelLines.forEach(l => popupCandleSeries.removePriceLine(l));
+        popupLevelLines.forEach(l => {
+            try { popupCandleSeries.removePriceLine(l); } catch {}
+            try { popupLevelSeries.removePriceLine(l); } catch {}
+        });
         popupLevelLines = [];
 
-        // Ligne d'entree (bleu pointille)
+        const dec = getDecimals(popupEntryPrice || candles[0]?.close || 1);
+
+        // Ligne d'entree (bleu pointille) - sur le chart + label sur 2ème échelle
         if (popupEntryPrice) {
+            // Ligne visible sur le chart (sans label sur l'échelle principale)
             popupEntryLine = popupCandleSeries.createPriceLine({
                 price: popupEntryPrice,
                 color: '#58a6ff',
                 lineWidth: 2,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
-                axisLabelVisible: true,
-                title: `Entree ${popupDirection === 'short' ? 'SHORT' : 'LONG'} ${popupEntryPrice}`,
+                axisLabelVisible: false,
+                title: '',
             });
+            // Label sur la 2ème échelle droite
+            popupLevelLines.push(popupLevelSeries.createPriceLine({
+                price: popupEntryPrice,
+                color: '#58a6ff',
+                lineWidth: 0,
+                axisLabelVisible: true,
+                title: `${popupDirection === 'short' ? 'SHORT' : 'LONG'}`,
+            }));
         }
 
         // Lignes SL / TP1 / TP2 / TP3
         if (popupLevels) {
-            if (popupLevels.sl) {
+            const levels = [
+                { key: 'sl',  label: 'SL',  color: '#f85149', width: 2, style: LightweightCharts.LineStyle.Solid },
+                { key: 'tp1', label: 'TP1', color: '#3fb950', width: 1, style: LightweightCharts.LineStyle.Dashed },
+                { key: 'tp2', label: 'TP2', color: '#3fb950', width: 1, style: LightweightCharts.LineStyle.Dashed },
+                { key: 'tp3', label: 'TP3', color: '#d2992a', width: 2, style: LightweightCharts.LineStyle.Dashed },
+            ];
+            levels.forEach(lv => {
+                const price = popupLevels[lv.key];
+                if (!price) return;
+                // Ligne fine sur le chart (pas de label)
                 popupLevelLines.push(popupCandleSeries.createPriceLine({
-                    price: popupLevels.sl,
-                    color: '#f85149',
-                    lineWidth: 2,
-                    lineStyle: LightweightCharts.LineStyle.Solid,
-                    axisLabelVisible: true,
-                    title: `SL ${popupLevels.sl}`,
+                    price,
+                    color: lv.color,
+                    lineWidth: lv.width,
+                    lineStyle: lv.style,
+                    axisLabelVisible: false,
+                    title: '',
                 }));
-            }
-            if (popupLevels.tp1) {
-                popupLevelLines.push(popupCandleSeries.createPriceLine({
-                    price: popupLevels.tp1,
-                    color: '#3fb950',
-                    lineWidth: 1,
-                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                // Label coloré sur la 2ème échelle droite
+                popupLevelLines.push(popupLevelSeries.createPriceLine({
+                    price,
+                    color: lv.color,
+                    lineWidth: 0,
                     axisLabelVisible: true,
-                    title: `TP1 ${popupLevels.tp1}`,
+                    title: lv.label,
                 }));
-            }
-            if (popupLevels.tp2) {
-                popupLevelLines.push(popupCandleSeries.createPriceLine({
-                    price: popupLevels.tp2,
-                    color: '#3fb950',
-                    lineWidth: 1,
-                    lineStyle: LightweightCharts.LineStyle.Dashed,
-                    axisLabelVisible: true,
-                    title: `TP2 ${popupLevels.tp2}`,
-                }));
-            }
-            if (popupLevels.tp3) {
-                popupLevelLines.push(popupCandleSeries.createPriceLine({
-                    price: popupLevels.tp3,
-                    color: '#d2992a',
-                    lineWidth: 2,
-                    lineStyle: LightweightCharts.LineStyle.Dashed,
-                    axisLabelVisible: true,
-                    title: `TP3 ${popupLevels.tp3}`,
-                }));
-            }
+            });
+        }
+
+        // Donner des données à la série levels pour que l'échelle se calibre
+        if (popupLevelSeries && adjusted.length) {
+            popupLevelSeries.setData(adjusted.map(c => ({ time: c.time, value: c.close })));
         }
 
         popupChart.timeScale().fitContent();
