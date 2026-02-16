@@ -1211,15 +1211,17 @@ function initPopupChart() {
     // Série invisible sur 2ème échelle de prix pour labels SL/TP
     popupLevelSeries = popupChart.addLineSeries({
         priceScaleId: 'levels',
+        color: 'transparent',
         lineWidth: 0,
-        visible: false,
         lastValueVisible: false,
         priceLineVisible: false,
+        crosshairMarkerVisible: false,
     });
     popupChart.priceScale('levels').applyOptions({
         scaleMargins: { top: 0.05, bottom: 0.25 },
         borderColor: '#30363d',
         visible: true,
+        alignLabels: true,
     });
 
     // --- Selection Zoom (double-clic → dessiner rectangle → zoom) ---
