@@ -152,7 +152,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
 class NoCacheMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
-        if '/static/' in str(request.url):
+        path = str(request.url.path)
+        if '/static/' in path or path == '/':
             response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
         return response
 
