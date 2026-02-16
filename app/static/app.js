@@ -1028,7 +1028,7 @@ function renderLivePositions(positions) {
                     <span class="pos-level pos-level-tp ${p.tp1_hit ? 'hit' : ''}">TP1 ${p.tp1.toFixed(dec)}</span>
                     <span class="pos-level pos-level-tp ${p.tp2_hit ? 'hit' : ''}">TP2 ${p.tp2.toFixed(dec)}</span>
                     <span class="pos-level pos-level-tp ${p.tp3_hit ? 'hit' : ''}">TP3 ${p.tp3.toFixed(dec)}</span>
-                    <button class="pos-chart-btn" onclick="openChartModal('${p.symbol}', ${p.entry_price}, '${p.direction}')">CHART</button>
+                    <button class="pos-chart-btn" onclick="openChartModal('${p.symbol}', ${p.entry_price}, '${p.direction}', {sl:${p.stop_loss},tp1:${p.tp1},tp2:${p.tp2},tp3:${p.tp3}})">CHART</button>
                     <button class="pos-close-btn" onclick="closePosition(${p.id}, this)">FERMER</button>
                 </div>
             </div>`;
@@ -1083,6 +1083,8 @@ let popupWs = null;
 let popupEntryPrice = null;
 let popupDirection = null;
 let popupEntryLine = null;
+let popupLevelLines = [];
+let popupLevels = null; // {sl, tp1, tp2, tp3}
 
 // --- Drag modal chart ---
 function initDragModal() {
@@ -1120,13 +1122,14 @@ function initDragModal() {
 }
 document.addEventListener('DOMContentLoaded', initDragModal);
 
-function openChartModal(symbol, entryPrice, direction) {
+function openChartModal(symbol, entryPrice, direction, levels) {
     popupPair = symbol;
     popupTimeframe = '5m';
     popupShowVol = false;
     popupShowFVG = false;
     popupEntryPrice = entryPrice || null;
     popupDirection = direction || null;
+    popupLevels = levels || null; // {sl, tp1, tp2, tp3}
 
     document.getElementById('chart-modal-title').textContent = symbol.split(':')[0];
     document.getElementById('chart-modal').style.display = 'flex';
@@ -1335,13 +1338,16 @@ async function loadPopupChart() {
 
         popupLastCandles = adjusted;
 
-        // Ligne horizontale au prix d'entree
+        // Supprimer anciennes lignes
         if (popupEntryLine) {
             popupCandleSeries.removePriceLine(popupEntryLine);
             popupEntryLine = null;
         }
+        popupLevelLines.forEach(l => popupCandleSeries.removePriceLine(l));
+        popupLevelLines = [];
+
+        // Ligne d'entree (bleu pointille)
         if (popupEntryPrice) {
-            const lineColor = popupDirection === 'short' ? '#f85149' : '#3fb950';
             popupEntryLine = popupCandleSeries.createPriceLine({
                 price: popupEntryPrice,
                 color: '#58a6ff',
@@ -1350,6 +1356,50 @@ async function loadPopupChart() {
                 axisLabelVisible: true,
                 title: `Entree ${popupDirection === 'short' ? 'SHORT' : 'LONG'} ${popupEntryPrice}`,
             });
+        }
+
+        // Lignes SL / TP1 / TP2 / TP3
+        if (popupLevels) {
+            if (popupLevels.sl) {
+                popupLevelLines.push(popupCandleSeries.createPriceLine({
+                    price: popupLevels.sl,
+                    color: '#f85149',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: `SL ${popupLevels.sl}`,
+                }));
+            }
+            if (popupLevels.tp1) {
+                popupLevelLines.push(popupCandleSeries.createPriceLine({
+                    price: popupLevels.tp1,
+                    color: '#3fb950',
+                    lineWidth: 1,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: `TP1 ${popupLevels.tp1}`,
+                }));
+            }
+            if (popupLevels.tp2) {
+                popupLevelLines.push(popupCandleSeries.createPriceLine({
+                    price: popupLevels.tp2,
+                    color: '#3fb950',
+                    lineWidth: 1,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: `TP2 ${popupLevels.tp2}`,
+                }));
+            }
+            if (popupLevels.tp3) {
+                popupLevelLines.push(popupCandleSeries.createPriceLine({
+                    price: popupLevels.tp3,
+                    color: '#d2992a',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: `TP3 ${popupLevels.tp3}`,
+                }));
+            }
         }
 
         popupChart.timeScale().fitContent();
@@ -1585,7 +1635,7 @@ function renderFreqtradeOpen(trades) {
             <div class="pos-levels">
                 <span class="pos-level pos-level-sl">SL ${sl ? sl.toFixed(dec) : '--'}</span>
                 <span class="ft-reason-inline">${t.strategy} · ${t.timeframe}</span>
-                <button class="pos-chart-btn" onclick="openChartModal('${chartSymbol}', ${entry}, '${t.direction}')">CHART</button>
+                <button class="pos-chart-btn" onclick="openChartModal('${chartSymbol}', ${entry}, '${t.direction}', {sl:${sl || 0}})">CHART</button>
             </div>
         </div>`;
     }).join('');
