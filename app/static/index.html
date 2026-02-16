@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=44">
+    <link rel="stylesheet" href="/static/style.css?v=45">
 </head>
 <body>
     <div id="app">
@@ -95,11 +95,11 @@
         <main class="main-content">
             <!-- Tabs -->
             <div class="tabs">
-                <button class="tab active" onclick="switchTab('signals')">Signaux</button>
+                <button class="tab active" onclick="switchTab('signals')">Crypto Signals</button>
+                <button class="tab" onclick="switchTab('freqtrade')"><span class="ft-badge-sm">FT</span> Freqtrade</button>
                 <button class="tab" onclick="switchTab('charts')">Charts</button>
                 <button class="tab" onclick="switchTab('trades')">Journal</button>
                 <button class="tab" onclick="switchTab('pairs')">Paires</button>
-                <button class="tab" onclick="switchTab('freqtrade')"><span class="ft-badge-sm">FT</span> Freqtrade</button>
             </div>
 
             <!-- Positions actives (live) - au-dessus des tabs content -->
@@ -224,6 +224,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=44"></script>
+    <script src="/static/app.js?v=45"></script>
 </body>
 </html>
