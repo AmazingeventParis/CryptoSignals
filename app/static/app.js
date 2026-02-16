@@ -333,11 +333,21 @@ function initChart() {
     container.style.position = 'relative';
     container.appendChild(vpCanvas);
 
-    // Redessiner les FVG quand on scroll/zoom
+    // Redessiner les FVG quand on scroll/zoom (horizontal + vertical)
     chartInstance.timeScale().subscribeVisibleLogicalRangeChange(() => drawFVG());
+    chartInstance.subscribeCrosshairMove(() => drawFVG());
+
+    // Redessiner FVG pendant drag/scroll vertical sur l'axe prix
+    let fvgRafId = null;
+    const scheduleRedrawFVG = () => {
+        if (fvgRafId) return;
+        fvgRafId = requestAnimationFrame(() => { fvgRafId = null; drawFVG(); });
+    };
+    container.addEventListener('mousemove', scheduleRedrawFVG);
+    container.addEventListener('touchmove', scheduleRedrawFVG);
 
     // Empecher le zoom page quand on scroll/pinch sur le chart
-    container.addEventListener('wheel', (e) => { e.preventDefault(); }, { passive: false });
+    container.addEventListener('wheel', (e) => { e.preventDefault(); scheduleRedrawFVG(); }, { passive: false });
     container.addEventListener('touchstart', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
 
     window.addEventListener('resize', () => {
@@ -1279,6 +1289,16 @@ function initPopupChart() {
     container.appendChild(popupFvgCanvas);
 
     popupChart.timeScale().subscribeVisibleLogicalRangeChange(() => drawPopupFVG());
+    popupChart.subscribeCrosshairMove(() => drawPopupFVG());
+
+    let popupFvgRafId = null;
+    const schedulePopupFVG = () => {
+        if (popupFvgRafId) return;
+        popupFvgRafId = requestAnimationFrame(() => { popupFvgRafId = null; drawPopupFVG(); });
+    };
+    container.addEventListener('mousemove', schedulePopupFVG);
+    container.addEventListener('touchmove', schedulePopupFVG);
+    container.addEventListener('wheel', schedulePopupFVG);
 
     // Resize handler
     const resizeObs = new ResizeObserver(() => {
