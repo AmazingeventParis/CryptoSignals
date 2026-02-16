@@ -1484,6 +1484,8 @@ function updateFreqtradeStats(stats) {
     pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
     pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
 
+    document.getElementById('ft-wins').textContent = stats.wins || 0;
+    document.getElementById('ft-losses').textContent = stats.losses || 0;
     document.getElementById('ft-winrate').textContent = `${stats.win_rate || 0}%`;
     document.getElementById('ft-trades').textContent = stats.trade_count || 0;
 }
