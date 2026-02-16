@@ -1455,8 +1455,9 @@ async function fetchFreqtradeData() {
         const open = await openRes.json();
         const trades = await tradesRes.json();
 
-        updateFreqtradeStats(stats);
-        renderFreqtradeOpen(open.trades || []);
+        const openTrades = open.trades || [];
+        updateFreqtradeStats(stats, openTrades.length);
+        renderFreqtradeOpen(openTrades);
         renderFreqtradeTrades(trades.trades || []);
     } catch (e) {
         console.error('Freqtrade fetch error:', e);
@@ -1464,7 +1465,7 @@ async function fetchFreqtradeData() {
     }
 }
 
-function updateFreqtradeStats(stats) {
+function updateFreqtradeStats(stats, openCount = 0) {
     const statusEl = document.getElementById('ft-status');
     if (stats.bot_running) {
         statusEl.textContent = 'running';
@@ -1487,6 +1488,7 @@ function updateFreqtradeStats(stats) {
     document.getElementById('ft-wins').textContent = stats.wins || 0;
     document.getElementById('ft-losses').textContent = stats.losses || 0;
     document.getElementById('ft-winrate').textContent = `${stats.win_rate || 0}%`;
+    document.getElementById('ft-active').textContent = openCount;
     document.getElementById('ft-trades').textContent = stats.trade_count || 0;
 }
 

@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=46">
+    <link rel="stylesheet" href="/static/style.css?v=47">
 </head>
 <body>
     <div id="app">
@@ -66,7 +66,11 @@
                 <div class="stats-row">
                     <div class="stat-card">
                         <div class="stat-value" id="ft-pnl">$0</div>
-                        <div class="stat-label">P&L</div>
+                        <div class="stat-label">P&L Total</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="ft-winrate">0%</div>
+                        <div class="stat-label">Win Rate</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="ft-wins" style="color:var(--green)">0</div>
@@ -77,8 +81,8 @@
                         <div class="stat-label">Perdus</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" id="ft-winrate">0%</div>
-                        <div class="stat-label">Win Rate</div>
+                        <div class="stat-value" id="ft-active">0</div>
+                        <div class="stat-label">Signaux actifs</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="ft-trades">0</div>
@@ -221,6 +225,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=46"></script>
+    <script src="/static/app.js?v=47"></script>
 </body>
 </html>
