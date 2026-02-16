@@ -333,21 +333,15 @@ function initChart() {
     container.style.position = 'relative';
     container.appendChild(vpCanvas);
 
-    // Redessiner les FVG quand on scroll/zoom (horizontal + vertical)
-    chartInstance.timeScale().subscribeVisibleLogicalRangeChange(() => drawFVG());
-    chartInstance.subscribeCrosshairMove(() => drawFVG());
-
-    // Redessiner FVG pendant drag/scroll vertical sur l'axe prix
-    let fvgRafId = null;
-    const scheduleRedrawFVG = () => {
-        if (fvgRafId) return;
-        fvgRafId = requestAnimationFrame(() => { fvgRafId = null; drawFVG(); });
-    };
-    container.addEventListener('mousemove', scheduleRedrawFVG);
-    container.addEventListener('touchmove', scheduleRedrawFVG);
+    // Boucle rAF continue pour redessiner FVG en temps reel (suit zoom/drag prix)
+    function fvgLoop() {
+        if (chartInstance && showFVG && currentTab === 'charts') drawFVG();
+        requestAnimationFrame(fvgLoop);
+    }
+    requestAnimationFrame(fvgLoop);
 
     // Empecher le zoom page quand on scroll/pinch sur le chart
-    container.addEventListener('wheel', (e) => { e.preventDefault(); scheduleRedrawFVG(); }, { passive: false });
+    container.addEventListener('wheel', (e) => { e.preventDefault(); }, { passive: false });
     container.addEventListener('touchstart', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
 
     window.addEventListener('resize', () => {
@@ -1288,17 +1282,13 @@ function initPopupChart() {
     container.style.position = 'relative';
     container.appendChild(popupFvgCanvas);
 
-    popupChart.timeScale().subscribeVisibleLogicalRangeChange(() => drawPopupFVG());
-    popupChart.subscribeCrosshairMove(() => drawPopupFVG());
-
-    let popupFvgRafId = null;
-    const schedulePopupFVG = () => {
-        if (popupFvgRafId) return;
-        popupFvgRafId = requestAnimationFrame(() => { popupFvgRafId = null; drawPopupFVG(); });
-    };
-    container.addEventListener('mousemove', schedulePopupFVG);
-    container.addEventListener('touchmove', schedulePopupFVG);
-    container.addEventListener('wheel', schedulePopupFVG);
+    // Boucle rAF continue pour redessiner FVG popup en temps reel
+    function popupFvgLoop() {
+        const modal = document.getElementById('chart-modal');
+        if (popupChart && popupShowFVG && modal && modal.style.display !== 'none') drawPopupFVG();
+        requestAnimationFrame(popupFvgLoop);
+    }
+    requestAnimationFrame(popupFvgLoop);
 
     // Resize handler
     const resizeObs = new ResizeObserver(() => {
