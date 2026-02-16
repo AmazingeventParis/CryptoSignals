@@ -516,6 +516,7 @@ function selectPair(symbol) {
 function changeTimeframe(tf) {
     selectedTimeframe = tf;
     chartNeedsFit = true;
+    lastMainPeriod = 0;
     document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`.tf-btn[onclick="changeTimeframe('${tf}')"]`).classList.add('active');
     loadChart();
@@ -812,6 +813,9 @@ function updateCountdowns() {
 }
 
 // --- Candle countdown timer ---
+let lastMainPeriod = 0;
+let lastPopupPeriod = 0;
+
 function timeframeToMs(tf) {
     const map = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800 };
     return (map[tf] || 300) * 1000;
@@ -834,9 +838,16 @@ function updateCandleCountdown() {
     const mainEl = document.getElementById('candle-countdown');
     if (mainEl && currentTab === 'charts') {
         const tfMs = timeframeToMs(selectedTimeframe);
+        const currentPeriod = Math.floor(now / tfMs);
         const remaining = tfMs - (now % tfMs);
         mainEl.textContent = formatCountdown(remaining);
         mainEl.style.color = remaining < 10000 ? 'var(--red)' : remaining < 30000 ? 'var(--orange)' : 'var(--text-secondary)';
+
+        // Nouvelle bougie detectee -> recharger les donnees du chart
+        if (lastMainPeriod > 0 && currentPeriod !== lastMainPeriod) {
+            loadChart();
+        }
+        lastMainPeriod = currentPeriod;
     }
 
     // Popup chart
@@ -844,9 +855,16 @@ function updateCandleCountdown() {
     const modal = document.getElementById('chart-modal');
     if (popupEl && modal && modal.style.display !== 'none') {
         const tfMs = timeframeToMs(popupTimeframe);
+        const currentPeriod = Math.floor(now / tfMs);
         const remaining = tfMs - (now % tfMs);
         popupEl.textContent = formatCountdown(remaining);
         popupEl.style.color = remaining < 10000 ? 'var(--red)' : remaining < 30000 ? 'var(--orange)' : 'var(--text-secondary)';
+
+        // Nouvelle bougie detectee -> recharger popup chart
+        if (lastPopupPeriod > 0 && currentPeriod !== lastPopupPeriod) {
+            loadPopupChart();
+        }
+        lastPopupPeriod = currentPeriod;
     }
 }
 setInterval(updateCandleCountdown, 1000);
@@ -1471,6 +1489,7 @@ function updatePopupLevelsPanel() {
 
 function popupChangeTimeframe(tf) {
     popupTimeframe = tf;
+    lastPopupPeriod = 0;
     document.querySelectorAll('.popup-tf-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`.popup-tf-btn[onclick="popupChangeTimeframe('${tf}')"]`).classList.add('active');
     loadPopupChart();
