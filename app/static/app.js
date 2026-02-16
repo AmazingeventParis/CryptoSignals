@@ -20,6 +20,7 @@ let wsReconnectTimer = null;
 let compareChart = null;
 let compareV1Series = null;
 let compareV2Series = null;
+let compareFtSeries = null;
 let comparePeriod = 0;
 
 // --- Init ---
@@ -1920,16 +1921,23 @@ function renderFreqtradeTrades(trades) {
 
 async function loadCompareData() {
     try {
-        const [v1Hist, v2Hist, v1Port, v2Port] = await Promise.all([
+        const [v1Hist, v2Hist, v1Port, v2Port, ftStats, ftTrades] = await Promise.all([
             fetch(`${API}/api/pnl-history?bot_version=V1&days=${comparePeriod}`).then(r => r.json()),
             fetch(`${API}/api/pnl-history?bot_version=V2&days=${comparePeriod}`).then(r => r.json()),
             fetch(`${API}/api/paper/portfolio?bot_version=V1`).then(r => r.json()),
             fetch(`${API}/api/paper/portfolio?bot_version=V2`).then(r => r.json()),
+            fetch(`${API}/api/freqtrade/stats`).then(r => r.json()).catch(() => ({})),
+            fetch(`${API}/api/freqtrade/trades?limit=200`).then(r => r.json()).catch(() => ({ trades: [] })),
         ]);
         updateCompareStats('v1', v1Port);
         updateCompareStats('v2', v2Port);
+        updateCompareFtStats(ftStats);
+
+        // Reconstruire l'historique P&L FT depuis les trades fermes
+        const ftHistory = buildFtPnlHistory(ftTrades.trades || [], ftStats.balance || 0, ftStats.total_pnl || 0);
+
         renderCompareChart(
-            v1Hist.history || [], v2Hist.history || [],
+            v1Hist.history || [], v2Hist.history || [], ftHistory,
             v1Port.initial_balance || 100, v2Port.initial_balance || 100
         );
     } catch (e) {
@@ -1955,7 +1963,52 @@ function updateCompareStats(v, portfolio) {
     el(`comp-${v}-wl`).innerHTML = `<span style="color:var(--green)">${wins}</span> / <span style="color:var(--red)">${losses}</span>`;
 }
 
-function renderCompareChart(v1Data, v2Data, v1Base, v2Base) {
+function updateCompareFtStats(ftStats) {
+    const el = (id) => document.getElementById(id);
+    if (!ftStats || ftStats.error) {
+        el('comp-ft-balance').textContent = 'hors ligne';
+        el('comp-ft-pnl').textContent = '--';
+        el('comp-ft-trades').textContent = '--';
+        el('comp-ft-winrate').textContent = '--';
+        el('comp-ft-wl').textContent = '-- / --';
+        return;
+    }
+    const bal = ftStats.balance || 0;
+    const pnl = ftStats.total_pnl || 0;
+    const trades = ftStats.trade_count || 0;
+    const wins = ftStats.wins || 0;
+    const losses = ftStats.losses || 0;
+    const wr = ftStats.win_rate || 0;
+    const pnlSign = pnl >= 0 ? '+' : '';
+    const pnlColor = pnl >= 0 ? 'color:var(--green)' : 'color:var(--red)';
+
+    el('comp-ft-balance').textContent = `$${bal.toFixed(2)}`;
+    el('comp-ft-pnl').innerHTML = `<span style="${pnlColor}">${pnlSign}${pnl.toFixed(2)}$</span>`;
+    el('comp-ft-trades').textContent = trades;
+    el('comp-ft-winrate').textContent = `${wr}%`;
+    el('comp-ft-wl').innerHTML = `<span style="color:var(--green)">${wins}</span> / <span style="color:var(--red)">${losses}</span>`;
+}
+
+function buildFtPnlHistory(trades, currentBalance, totalPnl) {
+    // Les trades FT arrivent du plus recent au plus ancien, on inverse
+    const sorted = [...trades].reverse();
+    if (!sorted.length) return [];
+
+    // Reconstruire le cumul P&L depuis les trades fermes
+    let cumPnl = 0;
+    const history = [];
+    for (const t of sorted) {
+        const pnl = t.pnl_usd || 0;
+        cumPnl += pnl;
+        const ts = t.close_date || t.open_date || '';
+        if (ts) {
+            history.push({ timestamp: ts, cumulative_pnl: cumPnl });
+        }
+    }
+    return history;
+}
+
+function renderCompareChart(v1Data, v2Data, ftData, v1Base, v2Base) {
     const container = document.getElementById('compare-chart-container');
     if (!container) return;
 
@@ -1967,7 +2020,7 @@ function renderCompareChart(v1Data, v2Data, v1Base, v2Base) {
     container.innerHTML = '';
 
     // Cas vide
-    if (!v1Data.length && !v2Data.length) {
+    if (!v1Data.length && !v2Data.length && !ftData.length) {
         container.innerHTML = '<div class="compare-empty">Pas encore de trades — les courbes apparaitront ici</div>';
         return;
     }
@@ -2000,11 +2053,19 @@ function renderCompareChart(v1Data, v2Data, v1Base, v2Base) {
         priceFormat: { type: 'custom', formatter: (p) => '$' + p.toFixed(2) },
     });
 
+    // FT line (orange)
+    compareFtSeries = compareChart.addLineSeries({
+        color: '#d29922',
+        lineWidth: 2,
+        title: 'FT',
+        priceFormat: { type: 'custom', formatter: (p) => '$' + p.toFixed(2) },
+    });
+
     // Baseline 100$ (gris)
     const baselineSeries = compareChart.addLineSeries({
         color: '#484f58',
         lineWidth: 1,
-        lineStyle: 2, // dashed
+        lineStyle: 2,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
@@ -2025,12 +2086,16 @@ function renderCompareChart(v1Data, v2Data, v1Base, v2Base) {
 
     const v1Points = mapData(v1Data, v1Base);
     const v2Points = mapData(v2Data, v2Base);
+    // FT: balance initiale estimee = balance actuelle - pnl total
+    const ftBase = ftData.length > 0 ? 100 : 100; // normalise a 100$ pour comparaison
+    const ftPoints = mapData(ftData, ftBase);
 
     if (v1Points.length) compareV1Series.setData(v1Points);
     if (v2Points.length) compareV2Series.setData(v2Points);
+    if (ftPoints.length) compareFtSeries.setData(ftPoints);
 
     // Baseline: ligne plate a 100$ sur toute la plage
-    const allTimes = [...v1Points, ...v2Points].map(p => p.time).filter(Boolean);
+    const allTimes = [...v1Points, ...v2Points, ...ftPoints].map(p => p.time).filter(Boolean);
     if (allTimes.length >= 2) {
         const minT = Math.min(...allTimes);
         const maxT = Math.max(...allTimes);

@@ -159,7 +159,7 @@
             <!-- Compare Tab -->
             <div id="tab-compare" class="tab-content">
                 <div class="compare-header">
-                    <h2>V1 vs V2 — Performance</h2>
+                    <h2>V1 vs V2 vs FT — Performance</h2>
                     <div class="compare-period-selector">
                         <button class="period-btn active" onclick="changeCompPeriod(0)">Tout</button>
                         <button class="period-btn" onclick="changeCompPeriod(7)">7j</button>
@@ -182,6 +182,14 @@
                         <div class="compare-stat"><span class="label">Trades</span><span id="comp-v2-trades" class="value">0</span></div>
                         <div class="compare-stat"><span class="label">Win Rate</span><span id="comp-v2-winrate" class="value">0%</span></div>
                         <div class="compare-stat"><span class="label">Gagnes / Perdus</span><span id="comp-v2-wl" class="value">0 / 0</span></div>
+                    </div>
+                    <div class="compare-col compare-ft">
+                        <div class="compare-col-header"><span class="ft-badge">FT</span> Freqtrade</div>
+                        <div class="compare-stat"><span class="label">Balance</span><span id="comp-ft-balance" class="value">--</span></div>
+                        <div class="compare-stat"><span class="label">P&L</span><span id="comp-ft-pnl" class="value">$0</span></div>
+                        <div class="compare-stat"><span class="label">Trades</span><span id="comp-ft-trades" class="value">0</span></div>
+                        <div class="compare-stat"><span class="label">Win Rate</span><span id="comp-ft-winrate" class="value">0%</span></div>
+                        <div class="compare-stat"><span class="label">Gagnes / Perdus</span><span id="comp-ft-wl" class="value">0 / 0</span></div>
                     </div>
                 </div>
                 <div id="compare-chart-container" class="compare-chart-container"></div>
