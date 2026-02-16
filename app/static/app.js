@@ -309,12 +309,22 @@ function initChart() {
         borderDownColor: '#f85149',
         wickUpColor: '#3fb950',
         wickDownColor: '#f85149',
+        priceScaleId: 'right',
+    });
+    candleSeries.priceScale().applyOptions({
+        scaleMargins: { top: 0.05, bottom: 0.25 },
     });
 
     volumeSeries = chartInstance.addHistogramSeries({
         priceFormat: { type: 'volume' },
-        priceScaleId: '',
+        priceScaleId: 'volume',
         scaleMargins: { top: 0.8, bottom: 0 },
+    });
+    chartInstance.priceScale('volume').applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+        drawTicks: false,
+        borderVisible: false,
+        visible: false,
     });
 
     // Canvas overlay pour FVG (Fair Value Gaps)
@@ -1170,13 +1180,22 @@ function initPopupChart() {
         upColor: '#3fb950', downColor: '#f85149',
         borderUpColor: '#3fb950', borderDownColor: '#f85149',
         wickUpColor: '#3fb950', wickDownColor: '#f85149',
+        priceScaleId: 'right',
+    });
+    popupCandleSeries.priceScale().applyOptions({
+        scaleMargins: { top: 0.05, bottom: 0.25 },
     });
 
     popupVolumeSeries = popupChart.addHistogramSeries({
         priceFormat: { type: 'volume' },
-        priceScaleId: '',
-        scaleMargins: { top: 0.8, bottom: 0 },
+        priceScaleId: 'popup-volume',
         visible: popupShowVol,
+    });
+    popupChart.priceScale('popup-volume').applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+        drawTicks: false,
+        borderVisible: false,
+        visible: false,
     });
 
     // --- Selection Zoom (double-clic → dessiner rectangle → zoom) ---
