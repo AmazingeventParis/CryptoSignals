@@ -593,6 +593,8 @@ async function loadChart() {
 async function refreshChartCandles() {
     if (!selectedPair || !chartInstance || !candleSeries) return;
     try {
+        const savedRange = chartInstance.timeScale().getVisibleLogicalRange();
+
         const sym = selectedPair.replace('/', '-');
         const res = await fetch(`${API}/api/ohlcv/${sym}?timeframe=${selectedTimeframe}&limit=10`);
         const data = await res.json();
@@ -605,13 +607,11 @@ async function refreshChartCandles() {
             open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
         }));
 
-        // update() ajoute ou met a jour sans toucher au zoom
         newCandles.forEach(c => {
             candleSeries.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
             volumeSeries.update({ time: c.time, value: c.volume, color: c.close >= c.open ? 'rgba(63,185,80,0.5)' : 'rgba(248,81,73,0.5)' });
         });
 
-        // Ajouter les nouvelles bougies a lastCandles pour FVG
         newCandles.forEach(nc => {
             const idx = lastCandles.findIndex(lc => lc.time === nc.time);
             if (idx >= 0) {
@@ -620,6 +620,11 @@ async function refreshChartCandles() {
                 lastCandles.push(nc);
             }
         });
+
+        // Restaurer le zoom exact
+        if (savedRange) {
+            chartInstance.timeScale().setVisibleLogicalRange(savedRange);
+        }
     } catch (e) {
         console.error('refreshChartCandles error:', e);
     }
@@ -628,6 +633,8 @@ async function refreshChartCandles() {
 async function refreshPopupChartCandles() {
     if (!popupPair || !popupChart || !popupCandleSeries) return;
     try {
+        const savedRange = popupChart.timeScale().getVisibleLogicalRange();
+
         const sym = popupPair.replace('/', '-');
         const res = await fetch(`${API}/api/ohlcv/${sym}?timeframe=${popupTimeframe}&limit=10`);
         const data = await res.json();
@@ -653,6 +660,10 @@ async function refreshPopupChartCandles() {
                 popupLastCandles.push(nc);
             }
         });
+
+        if (savedRange) {
+            popupChart.timeScale().setVisibleLogicalRange(savedRange);
+        }
     } catch (e) {
         console.error('refreshPopupChartCandles error:', e);
     }
@@ -714,15 +725,21 @@ function updateCandleRealtime(data) {
 
     // Mettre a jour la derniere bougie ou en ajouter une nouvelle
     const last = lastCandles[lastCandles.length - 1];
+    const isNewCandle = !last || candle.time > last.time;
+
+    // Sauvegarder le zoom avant ajout nouvelle bougie (evite le dezoom auto)
+    let savedRange = null;
+    if (isNewCandle && chartInstance) {
+        savedRange = chartInstance.timeScale().getVisibleLogicalRange();
+    }
+
     if (last && last.time === candle.time) {
-        // Meme bougie -> mise a jour
         last.open = candle.open;
         last.high = candle.high;
         last.low = candle.low;
         last.close = candle.close;
         last.volume = candle.volume;
-    } else if (!last || candle.time > last.time) {
-        // Nouvelle bougie
+    } else if (isNewCandle) {
         lastCandles.push(candle);
     }
 
@@ -736,6 +753,14 @@ function updateCandleRealtime(data) {
         value: candle.volume,
         color: candle.close >= candle.open ? 'rgba(63,185,80,0.5)' : 'rgba(248,81,73,0.5)',
     });
+
+    // Restaurer le zoom (decale de 1 bar pour voir la nouvelle bougie)
+    if (savedRange) {
+        chartInstance.timeScale().setVisibleLogicalRange({
+            from: savedRange.from + 1,
+            to: savedRange.to + 1,
+        });
+    }
 }
 
 function disconnectMexcWs() {
@@ -1639,14 +1664,22 @@ function connectPopupWs() {
             const time = data.t + tzOffset;
             const candle = { time, open: data.o, high: data.h, low: data.l, close: data.c, volume: data.q || data.a || 0 };
             const last = popupLastCandles[popupLastCandles.length - 1];
+            const isNewCandle = !last || candle.time > last.time;
+            let savedRange = null;
+            if (isNewCandle && popupChart) {
+                savedRange = popupChart.timeScale().getVisibleLogicalRange();
+            }
             if (last && last.time === candle.time) {
                 last.open = candle.open; last.high = candle.high; last.low = candle.low;
                 last.close = candle.close; last.volume = candle.volume;
-            } else if (!last || candle.time > last.time) {
+            } else if (isNewCandle) {
                 popupLastCandles.push(candle);
             }
             popupCandleSeries.update({ time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close });
             popupVolumeSeries.update({ time: candle.time, value: candle.volume, color: candle.close >= candle.open ? 'rgba(63,185,80,0.5)' : 'rgba(248,81,73,0.5)' });
+            if (savedRange) {
+                popupChart.timeScale().setVisibleLogicalRange({ from: savedRange.from + 1, to: savedRange.to + 1 });
+            }
         } catch {}
     };
     popupWs.onclose = () => { popupWs = null; };
