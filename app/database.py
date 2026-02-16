@@ -335,6 +335,30 @@ async def get_stats(bot_version: str = None) -> dict:
         }
 
 
+async def get_pnl_history(bot_version: str = None, days: int = 0) -> list[dict]:
+    """P&L cumule dans le temps depuis trades_journal."""
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        where_clauses = ["exit_time IS NOT NULL"]
+        params = []
+        if bot_version:
+            where_clauses.append("bot_version = ?")
+            params.append(bot_version)
+        if days > 0:
+            where_clauses.append(f"exit_time >= datetime('now', '-{days} days')")
+        where = " AND ".join(where_clauses)
+        query = f"""
+            SELECT exit_time as timestamp, pnl_usd, result, symbol, bot_version,
+                   SUM(pnl_usd) OVER (ORDER BY exit_time) as cumulative_pnl
+            FROM trades_journal
+            WHERE {where}
+            ORDER BY exit_time
+        """
+        cursor = await db.execute(query, params)
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
 # --- Active Positions (trailing stop) ---
 
 async def insert_active_position(pos: dict) -> int:

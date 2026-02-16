@@ -59,6 +59,16 @@ async def trading_stats(bot_version: str = Query(None)):
     return stats
 
 
+@router.get("/pnl-history")
+async def pnl_history(
+    bot_version: str = Query(None),
+    days: int = Query(0, ge=0, le=365),
+):
+    from app.database import get_pnl_history
+    history = await get_pnl_history(bot_version=bot_version, days=days)
+    return {"history": history, "count": len(history)}
+
+
 @router.get("/pairs")
 async def list_pairs():
     return {"pairs": get_enabled_pairs()}

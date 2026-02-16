@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=65">
+    <link rel="stylesheet" href="/static/style.css?v=66">
 </head>
 <body>
     <div id="app">
@@ -94,6 +94,7 @@
                 <button class="tab" onclick="switchTab('freqtrade')"><span class="ft-badge-sm">FT</span> Freqtrade</button>
                 <button class="tab" onclick="switchTab('charts')">Charts</button>
                 <button class="tab" onclick="switchTab('trades')">Journal</button>
+                <button class="tab" onclick="switchTab('compare')"><span class="compare-badge-sm">VS</span> Comparaison</button>
                 <button class="tab" onclick="switchTab('pairs')">Paires</button>
             </div>
 
@@ -153,6 +154,37 @@
                     <div class="ft-section-title">Historique des trades</div>
                     <div id="ft-closed-list"></div>
                 </div>
+            </div>
+
+            <!-- Compare Tab -->
+            <div id="tab-compare" class="tab-content">
+                <div class="compare-header">
+                    <h2>V1 vs V2 — Performance</h2>
+                    <div class="compare-period-selector">
+                        <button class="period-btn active" onclick="changeCompPeriod(0)">Tout</button>
+                        <button class="period-btn" onclick="changeCompPeriod(7)">7j</button>
+                        <button class="period-btn" onclick="changeCompPeriod(30)">30j</button>
+                    </div>
+                </div>
+                <div class="compare-stats">
+                    <div class="compare-col compare-v1">
+                        <div class="compare-col-header"><span class="v1-badge">V1</span> Bot V1 (strict)</div>
+                        <div class="compare-stat"><span class="label">Balance</span><span id="comp-v1-balance" class="value">$100</span></div>
+                        <div class="compare-stat"><span class="label">P&L</span><span id="comp-v1-pnl" class="value">$0</span></div>
+                        <div class="compare-stat"><span class="label">Trades</span><span id="comp-v1-trades" class="value">0</span></div>
+                        <div class="compare-stat"><span class="label">Win Rate</span><span id="comp-v1-winrate" class="value">0%</span></div>
+                        <div class="compare-stat"><span class="label">Gagnes / Perdus</span><span id="comp-v1-wl" class="value">0 / 0</span></div>
+                    </div>
+                    <div class="compare-col compare-v2">
+                        <div class="compare-col-header"><span class="v2-badge">V2</span> Bot V2 (assoupli)</div>
+                        <div class="compare-stat"><span class="label">Balance</span><span id="comp-v2-balance" class="value">$100</span></div>
+                        <div class="compare-stat"><span class="label">P&L</span><span id="comp-v2-pnl" class="value">$0</span></div>
+                        <div class="compare-stat"><span class="label">Trades</span><span id="comp-v2-trades" class="value">0</span></div>
+                        <div class="compare-stat"><span class="label">Win Rate</span><span id="comp-v2-winrate" class="value">0%</span></div>
+                        <div class="compare-stat"><span class="label">Gagnes / Perdus</span><span id="comp-v2-wl" class="value">0 / 0</span></div>
+                    </div>
+                </div>
+                <div id="compare-chart-container" class="compare-chart-container"></div>
             </div>
 
             <!-- Pairs Tab -->
@@ -225,6 +257,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=65"></script>
+    <script src="/static/app.js?v=66"></script>
 </body>
 </html>

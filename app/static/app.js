@@ -17,6 +17,10 @@ let preloadedCandles = null;
 let preloadedPair = null;
 let mexcWs = null;
 let wsReconnectTimer = null;
+let compareChart = null;
+let compareV1Series = null;
+let compareV2Series = null;
+let comparePeriod = 0;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -295,6 +299,7 @@ function switchTab(tab) {
             }, 15000);
         }
     }
+    if (tab === 'compare') loadCompareData();
 }
 
 // --- Charts ---
@@ -1909,4 +1914,143 @@ function renderFreqtradeTrades(trades) {
             </div>
         </div>`;
     }).join('');
+}
+
+// --- Comparaison V1 vs V2 ---
+
+async function loadCompareData() {
+    try {
+        const [v1Hist, v2Hist, v1Port, v2Port] = await Promise.all([
+            fetch(`${API}/api/pnl-history?bot_version=V1&days=${comparePeriod}`).then(r => r.json()),
+            fetch(`${API}/api/pnl-history?bot_version=V2&days=${comparePeriod}`).then(r => r.json()),
+            fetch(`${API}/api/paper/portfolio?bot_version=V1`).then(r => r.json()),
+            fetch(`${API}/api/paper/portfolio?bot_version=V2`).then(r => r.json()),
+        ]);
+        updateCompareStats('v1', v1Port);
+        updateCompareStats('v2', v2Port);
+        renderCompareChart(
+            v1Hist.history || [], v2Hist.history || [],
+            v1Port.initial_balance || 100, v2Port.initial_balance || 100
+        );
+    } catch (e) {
+        console.error('loadCompareData error:', e);
+    }
+}
+
+function updateCompareStats(v, portfolio) {
+    const bal = portfolio.current_balance || 0;
+    const pnl = portfolio.total_pnl || 0;
+    const trades = portfolio.total_trades || 0;
+    const wins = portfolio.wins || 0;
+    const losses = portfolio.losses || 0;
+    const wr = trades > 0 ? (wins / trades * 100).toFixed(1) : '0';
+    const pnlSign = pnl >= 0 ? '+' : '';
+    const pnlColor = pnl >= 0 ? 'color:var(--green)' : 'color:var(--red)';
+
+    const el = (id) => document.getElementById(id);
+    el(`comp-${v}-balance`).textContent = `$${bal.toFixed(2)}`;
+    el(`comp-${v}-pnl`).innerHTML = `<span style="${pnlColor}">${pnlSign}${pnl.toFixed(2)}$</span>`;
+    el(`comp-${v}-trades`).textContent = trades;
+    el(`comp-${v}-winrate`).textContent = `${wr}%`;
+    el(`comp-${v}-wl`).innerHTML = `<span style="color:var(--green)">${wins}</span> / <span style="color:var(--red)">${losses}</span>`;
+}
+
+function renderCompareChart(v1Data, v2Data, v1Base, v2Base) {
+    const container = document.getElementById('compare-chart-container');
+    if (!container) return;
+
+    // Detruire ancien chart
+    if (compareChart) {
+        compareChart.remove();
+        compareChart = null;
+    }
+    container.innerHTML = '';
+
+    // Cas vide
+    if (!v1Data.length && !v2Data.length) {
+        container.innerHTML = '<div class="compare-empty">Pas encore de trades — les courbes apparaitront ici</div>';
+        return;
+    }
+
+    const utcOffset = new Date().getTimezoneOffset() * 60;
+
+    compareChart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: 400,
+        layout: { background: { color: '#161b22' }, textColor: '#e6edf3' },
+        grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+        rightPriceScale: { borderColor: '#30363d' },
+        timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+        crosshair: { mode: 0 },
+    });
+
+    // V1 line (bleu)
+    compareV1Series = compareChart.addLineSeries({
+        color: '#58a6ff',
+        lineWidth: 2,
+        title: 'V1',
+        priceFormat: { type: 'custom', formatter: (p) => '$' + p.toFixed(2) },
+    });
+
+    // V2 line (violet)
+    compareV2Series = compareChart.addLineSeries({
+        color: '#bc8cff',
+        lineWidth: 2,
+        title: 'V2',
+        priceFormat: { type: 'custom', formatter: (p) => '$' + p.toFixed(2) },
+    });
+
+    // Baseline 100$ (gris)
+    const baselineSeries = compareChart.addLineSeries({
+        color: '#484f58',
+        lineWidth: 1,
+        lineStyle: 2, // dashed
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+    });
+
+    function mapData(data, base) {
+        const points = [];
+        if (data.length > 0) {
+            const firstTs = Math.floor(new Date(data[0].timestamp).getTime() / 1000) - utcOffset - 1;
+            points.push({ time: firstTs, value: base });
+        }
+        for (const d of data) {
+            const ts = Math.floor(new Date(d.timestamp).getTime() / 1000) - utcOffset;
+            points.push({ time: ts, value: base + (d.cumulative_pnl || 0) });
+        }
+        return points;
+    }
+
+    const v1Points = mapData(v1Data, v1Base);
+    const v2Points = mapData(v2Data, v2Base);
+
+    if (v1Points.length) compareV1Series.setData(v1Points);
+    if (v2Points.length) compareV2Series.setData(v2Points);
+
+    // Baseline: ligne plate a 100$ sur toute la plage
+    const allTimes = [...v1Points, ...v2Points].map(p => p.time).filter(Boolean);
+    if (allTimes.length >= 2) {
+        const minT = Math.min(...allTimes);
+        const maxT = Math.max(...allTimes);
+        baselineSeries.setData([
+            { time: minT, value: 100 },
+            { time: maxT, value: 100 },
+        ]);
+    }
+
+    compareChart.timeScale().fitContent();
+
+    // Responsive
+    new ResizeObserver(() => {
+        if (compareChart) compareChart.applyOptions({ width: container.clientWidth });
+    }).observe(container);
+}
+
+function changeCompPeriod(days) {
+    comparePeriod = days;
+    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    loadCompareData();
 }

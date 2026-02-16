@@ -720,3 +720,23 @@ body {
     text-align: center;
     padding: 20px 0;
 }
+
+/* --- Comparaison V1 vs V2 --- */
+.compare-badge-sm { background: var(--orange); color: #000; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; }
+.compare-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; }
+.compare-header h2 { font-size: 16px; color: var(--text); margin: 0; }
+.compare-period-selector { display: flex; gap: 4px; }
+.period-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text-secondary); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all .15s; }
+.period-btn:hover { border-color: var(--text-secondary); }
+.period-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+.compare-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.compare-col { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.compare-v1 { border-top: 3px solid #58a6ff; }
+.compare-v2 { border-top: 3px solid #bc8cff; }
+.compare-col-header { font-weight: 600; margin-bottom: 8px; font-size: 14px; }
+.compare-stat { display: flex; justify-content: space-between; padding: 5px 0; font-size: 13px; border-bottom: 1px solid var(--border); }
+.compare-stat:last-child { border-bottom: none; }
+.compare-stat .label { color: var(--text-secondary); }
+.compare-stat .value { font-weight: 600; font-family: monospace; }
+.compare-chart-container { height: 400px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.compare-empty { color: var(--text-secondary); font-size: 14px; text-align: center; padding: 60px 0; }
