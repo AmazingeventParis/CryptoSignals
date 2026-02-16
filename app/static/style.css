@@ -495,11 +495,11 @@ body {
     margin-top: 12px;
     padding-top: 10px;
 }
-.ft-stats-header {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-secondary);
+.ft-header {
     margin-bottom: 8px;
+    padding: 0;
+}
+.ft-header h1 {
     display: flex;
     align-items: center;
     gap: 6px;

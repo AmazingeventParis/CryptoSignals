@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=55">
+    <link rel="stylesheet" href="/static/style.css?v=56">
 </head>
 <body>
     <div id="app">
@@ -58,11 +58,15 @@
 
             <!-- Freqtrade Stats -->
             <div class="ft-stats-section">
-                <div class="ft-stats-header">
-                    <span class="ft-badge">FT</span> Freqtrade
-                    <span id="ft-balance" class="balance">--</span>
-                    <span id="ft-status" class="ft-status offline">offline</span>
-                </div>
+                <header class="header ft-header">
+                    <div class="header-left">
+                        <h1><span class="ft-badge">FT</span> Freqtrade</h1>
+                        <span id="ft-status" class="badge badge-offline">hors ligne</span>
+                    </div>
+                    <div class="header-right">
+                        <span id="ft-balance" class="balance">--</span>
+                    </div>
+                </header>
                 <div class="stats-row">
                     <div class="stat-card">
                         <div class="stat-value" id="ft-pnl">$0</div>
@@ -224,6 +228,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=55"></script>
+    <script src="/static/app.js?v=56"></script>
 </body>
 </html>

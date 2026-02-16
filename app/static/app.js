@@ -1570,11 +1570,11 @@ async function fetchFreqtradeData() {
 function updateFreqtradeStats(stats, openCount = 0) {
     const statusEl = document.getElementById('ft-status');
     if (stats.bot_running) {
-        statusEl.textContent = 'running';
-        statusEl.className = 'ft-status online';
+        statusEl.textContent = 'en ligne';
+        statusEl.className = 'badge badge-online';
     } else {
-        statusEl.textContent = 'offline';
-        statusEl.className = 'ft-status offline';
+        statusEl.textContent = 'hors ligne';
+        statusEl.className = 'badge badge-offline';
     }
 
     const bal = stats.balance || 0;
