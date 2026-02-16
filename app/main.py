@@ -198,7 +198,11 @@ async def api_logout():
 
 @app.get("/")
 async def dashboard():
-    return FileResponse(str(static_dir / "index.html"))
+    response = FileResponse(str(static_dir / "index.html"))
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.get("/health")
