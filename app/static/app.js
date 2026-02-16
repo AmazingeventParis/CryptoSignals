@@ -843,9 +843,11 @@ function updateCandleCountdown() {
         mainEl.textContent = formatCountdown(remaining);
         mainEl.style.color = remaining < 10000 ? 'var(--red)' : remaining < 30000 ? 'var(--orange)' : 'var(--text-secondary)';
 
-        // Nouvelle bougie detectee -> recharger les donnees du chart
+        // Nouvelle bougie detectee -> attendre 2s puis recharger + reconnecter WS
         if (lastMainPeriod > 0 && currentPeriod !== lastMainPeriod) {
-            loadChart();
+            setTimeout(() => {
+                loadChart(); // reconnecte le WS aussi
+            }, 2000);
         }
         lastMainPeriod = currentPeriod;
     }
@@ -860,9 +862,11 @@ function updateCandleCountdown() {
         popupEl.textContent = formatCountdown(remaining);
         popupEl.style.color = remaining < 10000 ? 'var(--red)' : remaining < 30000 ? 'var(--orange)' : 'var(--text-secondary)';
 
-        // Nouvelle bougie detectee -> recharger popup chart
+        // Nouvelle bougie detectee -> attendre 2s puis recharger popup
         if (lastPopupPeriod > 0 && currentPeriod !== lastPopupPeriod) {
-            loadPopupChart();
+            setTimeout(() => {
+                loadPopupChart();
+            }, 2000);
         }
         lastPopupPeriod = currentPeriod;
     }

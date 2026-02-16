@@ -401,7 +401,7 @@ async def _do_execute(
 
 
 # --- WebSocket relay MEXC temps reel ---
-TF_MAP = {'1m': 'Min1', '3m': 'Min3', '5m': 'Min5', '15m': 'Min15', '1h': 'Min60', '4h': 'Hour4'}
+TF_MAP = {'1m': 'Min1', '3m': 'Min3', '5m': 'Min5', '15m': 'Min15', '1h': 'Min60', '4h': 'Hour4', '1d': 'Day1', '1w': 'Week1'}
 
 
 @app.websocket("/ws/kline/{symbol}/{timeframe}")
