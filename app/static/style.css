@@ -162,7 +162,13 @@ body {
 }
 .pair-btn:hover { border-color: var(--blue); color: var(--text); }
 .pair-btn.active { background: rgba(88,166,255,0.15); border-color: var(--blue); color: var(--blue); }
-.tf-selector { display: flex; gap: 3px; }
+.tf-selector { display: flex; gap: 3px; align-items: center; }
+.candle-countdown {
+    font-size: 12px; font-weight: 700; font-family: 'Courier New', monospace;
+    margin-left: 8px; padding: 3px 8px; border-radius: 4px;
+    background: rgba(255,255,255,0.06); color: var(--text-secondary);
+    min-width: 42px; text-align: center;
+}
 .tf-btn {
     background: none; border: 1px solid var(--border); color: var(--text-secondary);
     padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;

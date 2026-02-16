@@ -811,6 +811,47 @@ function updateCountdowns() {
     });
 }
 
+// --- Candle countdown timer ---
+function timeframeToMs(tf) {
+    const map = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800 };
+    return (map[tf] || 300) * 1000;
+}
+
+function formatCountdown(ms) {
+    if (ms <= 0) return '0:00';
+    const totalSec = Math.ceil(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+function updateCandleCountdown() {
+    const now = Date.now();
+
+    // Chart principal
+    const mainEl = document.getElementById('candle-countdown');
+    if (mainEl && currentTab === 'charts') {
+        const tfMs = timeframeToMs(selectedTimeframe);
+        const remaining = tfMs - (now % tfMs);
+        mainEl.textContent = formatCountdown(remaining);
+        mainEl.style.color = remaining < 10000 ? 'var(--red)' : remaining < 30000 ? 'var(--orange)' : 'var(--text-secondary)';
+    }
+
+    // Popup chart
+    const popupEl = document.getElementById('popup-candle-countdown');
+    const modal = document.getElementById('chart-modal');
+    if (popupEl && modal && modal.style.display !== 'none') {
+        const tfMs = timeframeToMs(popupTimeframe);
+        const remaining = tfMs - (now % tfMs);
+        popupEl.textContent = formatCountdown(remaining);
+        popupEl.style.color = remaining < 10000 ? 'var(--red)' : remaining < 30000 ? 'var(--orange)' : 'var(--text-secondary)';
+    }
+}
+setInterval(updateCandleCountdown, 1000);
+updateCandleCountdown();
+
 // --- Positions live (WebSocket MEXC direct) ---
 let positionsData = [];   // positions depuis l'API
 let livePrices = {};      // symbol -> prix live
