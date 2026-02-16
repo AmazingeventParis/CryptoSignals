@@ -1085,7 +1085,6 @@ let popupDirection = null;
 let popupEntryLine = null;
 let popupLevelLines = [];
 let popupLevels = null; // {sl, tp1, tp2, tp3}
-let popupLevelSeries = null; // invisible series on 2nd price scale for SL/TP labels
 
 // --- Drag modal chart ---
 function initDragModal() {
@@ -1161,7 +1160,6 @@ function closeChartModal() {
         popupChart = null;
         popupCandleSeries = null;
         popupVolumeSeries = null;
-        popupLevelSeries = null;
         popupLevelLines = [];
     }
     if (popupFvgCanvas) {
@@ -1209,21 +1207,6 @@ function initPopupChart() {
     });
 
     // Série invisible sur 2ème échelle de prix pour labels SL/TP
-    popupLevelSeries = popupChart.addLineSeries({
-        priceScaleId: 'levels',
-        color: 'transparent',
-        lineWidth: 0,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        crosshairMarkerVisible: false,
-    });
-    popupChart.priceScale('levels').applyOptions({
-        scaleMargins: { top: 0.05, bottom: 0.25 },
-        borderColor: '#30363d',
-        visible: true,
-        alignLabels: true,
-    });
-
     // --- Selection Zoom (double-clic → dessiner rectangle → zoom) ---
     const zoomOverlay = document.createElement('div');
     zoomOverlay.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:100;display:none;cursor:crosshair;';
@@ -1364,31 +1347,19 @@ async function loadPopupChart() {
         }
         popupLevelLines.forEach(l => {
             try { popupCandleSeries.removePriceLine(l); } catch {}
-            try { popupLevelSeries.removePriceLine(l); } catch {}
         });
         popupLevelLines = [];
 
-        const dec = getDecimals(popupEntryPrice || candles[0]?.close || 1);
-
-        // Ligne d'entree (bleu pointille) - sur le chart + label sur 2ème échelle
+        // Ligne d'entree (bleu pointille) avec label sur l'axe
         if (popupEntryPrice) {
-            // Ligne visible sur le chart (sans label sur l'échelle principale)
             popupEntryLine = popupCandleSeries.createPriceLine({
                 price: popupEntryPrice,
                 color: '#58a6ff',
                 lineWidth: 2,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
-                axisLabelVisible: false,
-                title: '',
-            });
-            // Label sur la 2ème échelle droite
-            popupLevelLines.push(popupLevelSeries.createPriceLine({
-                price: popupEntryPrice,
-                color: '#58a6ff',
-                lineWidth: 0,
                 axisLabelVisible: true,
-                title: `${popupDirection === 'short' ? 'SHORT' : 'LONG'}`,
-            }));
+                title: popupDirection === 'short' ? 'SHORT' : 'LONG',
+            });
         }
 
         // Lignes SL / TP1 / TP2 / TP3
@@ -1402,30 +1373,17 @@ async function loadPopupChart() {
             levels.forEach(lv => {
                 const price = popupLevels[lv.key];
                 if (!price) return;
-                // Ligne fine sur le chart (pas de label)
                 popupLevelLines.push(popupCandleSeries.createPriceLine({
                     price,
                     color: lv.color,
                     lineWidth: lv.width,
                     lineStyle: lv.style,
-                    axisLabelVisible: false,
-                    title: '',
-                }));
-                // Label coloré sur la 2ème échelle droite
-                popupLevelLines.push(popupLevelSeries.createPriceLine({
-                    price,
-                    color: lv.color,
-                    lineWidth: 0,
                     axisLabelVisible: true,
                     title: lv.label,
                 }));
             });
         }
 
-        // Donner des données à la série levels pour que l'échelle se calibre
-        if (popupLevelSeries && adjusted.length) {
-            popupLevelSeries.setData(adjusted.map(c => ({ time: c.time, value: c.close })));
-        }
 
         popupChart.timeScale().fitContent();
         setTimeout(() => drawPopupFVG(), 50);
