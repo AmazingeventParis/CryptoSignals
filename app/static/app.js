@@ -1502,28 +1502,61 @@ function renderFreqtradeOpen(trades) {
         const pnl = t.pnl_usd || 0;
         const pnlPct = t.pnl_pct || 0;
         const isProfit = pnl >= 0;
-        const cls = isProfit ? 'ft-profit' : 'ft-loss';
+        const cardClass = pnl > 0 ? 'pos-profit' : pnl < 0 ? 'pos-loss' : '';
         const pnlCls = isProfit ? 'up' : 'down';
+        const sign = pnl >= 0 ? '+' : '';
         const sym = t.symbol.replace(':USDT', '').replace('/USDT', '');
+        const dir = t.direction === 'long' ? 'LONG' : 'SHORT';
+        const dirColor = t.direction === 'long' ? 'var(--green)' : 'var(--red)';
+        const dec = getDecimals(t.entry_price);
+        const leverage = t.leverage || 1;
+        const posSize = (t.stake_amount || 0) * leverage;
+
+        // Barre de progression : distance entre entry et stoploss vs entry et current
+        let progress = 50;
+        const sl = t.stoploss || 0;
+        const entry = t.entry_price || 0;
+        const cur = t.current_price || entry;
+        if (sl && entry) {
+            const maxDist = Math.abs(entry - sl) * 3; // SL = 33%, profit cote = 67%
+            if (t.direction === 'long') {
+                progress = Math.max(0, Math.min(100, ((cur - sl) / (maxDist || 1)) * 100));
+            } else {
+                progress = Math.max(0, Math.min(100, ((sl - cur) / (maxDist || 1)) * 100));
+            }
+        }
+        const barColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
         return `
-        <div class="ft-card ${cls}">
-            <div class="ft-card-header">
-                <div class="ft-card-symbol">
+        <div class="pos-card ${cardClass}">
+            <div class="pos-header">
+                <div style="display:flex;align-items:center;gap:8px">
                     <span class="ft-badge">FT</span>
-                    ${sym}
-                    <span class="ft-dir ${t.direction}">${t.direction}</span>
+                    <span class="pos-symbol">${sym}</span>
+                    <span style="color:${dirColor};font-weight:700;font-size:13px">${dir}</span>
                 </div>
-                <div class="ft-card-pnl ${pnlCls}">
-                    ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
-                    <span style="font-size:12px">(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)</span>
+                <div class="pos-pnl ${pnlCls}">${sign}${pnl.toFixed(2)}$ <span style="font-size:13px">(${sign}${pnlPct.toFixed(2)}%)</span></div>
+            </div>
+            <div class="pos-prices">
+                <div class="pos-price-item">
+                    <div class="pos-price-label">Entree</div>
+                    <div class="pos-price-val">${entry.toFixed(dec)}</div>
+                </div>
+                <div class="pos-price-item">
+                    <div class="pos-price-label">Prix actuel</div>
+                    <div class="pos-price-val" style="color:${pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${cur.toFixed(dec)}</div>
+                </div>
+                <div class="pos-price-item">
+                    <div class="pos-price-label">Mise x${leverage}</div>
+                    <div class="pos-price-val">${(t.stake_amount || 0).toFixed(0)}$ → ${posSize.toFixed(0)}$</div>
                 </div>
             </div>
-            <div class="ft-card-body">
-                <div>Entree<br><span class="val">${t.entry_price}</span></div>
-                <div>Actuel<br><span class="val" style="color:${isProfit ? 'var(--green)' : 'var(--red)'}">${t.current_price}</span></div>
-                <div>Mise<br><span class="val">$${(t.stake_amount || 0).toFixed(2)}</span></div>
+            <div class="pos-bar"><div class="pos-bar-fill" style="width:${progress}%;background:${barColor}"></div></div>
+            <div class="pos-levels">
+                <span class="pos-level pos-level-sl">SL ${sl ? sl.toFixed(dec) : '--'}</span>
+                <span class="ft-reason-inline">${t.strategy} · ${t.timeframe}</span>
+                <button class="pos-chart-btn" onclick="openChartModal('${t.symbol}', ${entry}, '${t.direction}')">CHART</button>
             </div>
-            <div class="ft-reason">${t.strategy} &middot; ${t.timeframe} &middot; ${t.open_date}</div>
         </div>`;
     }).join('');
 }
@@ -1536,29 +1569,46 @@ function renderFreqtradeTrades(trades) {
     }
     container.innerHTML = trades.map(t => {
         const pnl = t.pnl_usd || 0;
+        const pnlPct = t.pnl_pct || 0;
         const isProfit = pnl >= 0;
-        const cls = isProfit ? 'ft-profit' : 'ft-loss';
+        const cardClass = pnl > 0 ? 'pos-profit' : pnl < 0 ? 'pos-loss' : '';
         const pnlCls = isProfit ? 'up' : 'down';
+        const sign = pnl >= 0 ? '+' : '';
         const sym = t.symbol.replace(':USDT', '').replace('/USDT', '');
+        const dir = t.direction === 'long' ? 'LONG' : 'SHORT';
+        const dirColor = t.direction === 'long' ? 'var(--green)' : 'var(--red)';
+        const dec = getDecimals(t.entry_price);
+        const resultBadge = isProfit
+            ? '<span style="background:rgba(63,185,80,0.15);color:var(--green);padding:2px 6px;border-radius:3px;font-size:10px;font-weight:600">WIN</span>'
+            : '<span style="background:rgba(248,81,73,0.15);color:var(--red);padding:2px 6px;border-radius:3px;font-size:10px;font-weight:600">LOSS</span>';
         return `
-        <div class="ft-card ${cls}">
-            <div class="ft-card-header">
-                <div class="ft-card-symbol">
+        <div class="pos-card ${cardClass}">
+            <div class="pos-header">
+                <div style="display:flex;align-items:center;gap:8px">
                     <span class="ft-badge">FT</span>
-                    ${sym}
-                    <span class="ft-dir ${t.direction}">${t.direction}</span>
+                    <span class="pos-symbol">${sym}</span>
+                    <span style="color:${dirColor};font-weight:700;font-size:13px">${dir}</span>
+                    ${resultBadge}
                 </div>
-                <div class="ft-card-pnl ${pnlCls}">
-                    ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
-                    <span style="font-size:12px">(${(t.pnl_pct || 0) >= 0 ? '+' : ''}${(t.pnl_pct || 0).toFixed(2)}%)</span>
+                <div class="pos-pnl ${pnlCls}">${sign}${pnl.toFixed(2)}$ <span style="font-size:13px">(${sign}${pnlPct.toFixed(2)}%)</span></div>
+            </div>
+            <div class="pos-prices">
+                <div class="pos-price-item">
+                    <div class="pos-price-label">Entree</div>
+                    <div class="pos-price-val">${(t.entry_price || 0).toFixed(dec)}</div>
+                </div>
+                <div class="pos-price-item">
+                    <div class="pos-price-label">Sortie</div>
+                    <div class="pos-price-val" style="color:${pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${(t.exit_price || 0).toFixed(dec)}</div>
+                </div>
+                <div class="pos-price-item">
+                    <div class="pos-price-label">Raison</div>
+                    <div class="pos-price-val" style="font-size:13px">${t.close_reason || '-'}</div>
                 </div>
             </div>
-            <div class="ft-card-body">
-                <div>Entree<br><span class="val">${t.entry_price}</span></div>
-                <div>Sortie<br><span class="val">${t.exit_price || '-'}</span></div>
-                <div>Raison<br><span class="val" style="font-size:11px">${t.close_reason || '-'}</span></div>
+            <div class="pos-levels">
+                <span class="ft-reason-inline">${t.strategy} · ${t.open_date} → ${t.close_date || '?'}</span>
             </div>
-            <div class="ft-reason">${t.strategy} &middot; ${t.open_date} &rarr; ${t.close_date || '?'}</div>
         </div>`;
     }).join('');
 }

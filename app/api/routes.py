@@ -488,6 +488,7 @@ async def ft_open_trades():
             is_short = t.get("is_short", False)
             result.append({
                 "id": f"ft_{t['trade_id']}",
+                "trade_id": t.get("trade_id"),
                 "symbol": t.get("pair", ""),
                 "direction": "short" if is_short else "long",
                 "entry_price": t.get("open_rate", 0),
@@ -495,10 +496,14 @@ async def ft_open_trades():
                 "pnl_usd": t.get("profit_abs", 0),
                 "pnl_pct": t.get("profit_pct", 0),
                 "stoploss": t.get("stop_loss_abs", 0),
+                "stoploss_pct": t.get("stop_loss_pct", 0),
                 "stake_amount": t.get("stake_amount", 0),
+                "leverage": t.get("leverage", 1),
                 "open_date": t.get("open_date_hum", ""),
                 "strategy": t.get("strategy", ""),
                 "timeframe": t.get("timeframe", "5m"),
+                "min_rate": t.get("min_rate", 0),
+                "max_rate": t.get("max_rate", 0),
             })
         return {"trades": result, "count": len(result)}
     except Exception as e:
