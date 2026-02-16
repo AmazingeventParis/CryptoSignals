@@ -16,6 +16,12 @@ pairs:
     enabled: true
   - symbol: "KAITO/USDT:USDT"
     enabled: true
+  - symbol: "BTC/USDT:USDT"
+    enabled: true
+  - symbol: "VIRTUAL/USDT:USDT"
+    enabled: true
+  - symbol: "TRUMP/USDT:USDT"
+    enabled: true
 
 # --- Scanner ---
 scanner:
@@ -193,6 +199,10 @@ scoring:
     strong: 80
     medium: 65
     weak: 50
+
+# --- V1 specifique ---
+# Direction neutre en swing = BLOQUE (pas de trade)
+swing_neutral_allowed: false
 
 # --- Dashboard ---
 dashboard:

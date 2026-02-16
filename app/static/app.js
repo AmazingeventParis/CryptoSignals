@@ -1,7 +1,7 @@
 const API = '';
 
 // --- State ---
-let currentTab = 'signals';
+let currentTab = 'v1';
 let chartInstance = null;
 let candleSeries = null;
 let volumeSeries = null;
@@ -21,7 +21,6 @@ let wsReconnectTimer = null;
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
     refreshAll();
-    // Pre-charger la 1ere paire + ses bougies pour affichage instantane
     fetch(`${API}/api/pairs`).then(r => r.json()).then(d => {
         if (d.pairs && d.pairs.length) {
             selectedPair = d.pairs[0];
@@ -34,17 +33,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     fetchTickers();
     setInterval(refreshAll, 15000);
-    // Countdown timer pour expirer les signaux
     setInterval(updateCountdowns, 1000);
 });
 
 async function refreshAll() {
     await Promise.all([
         fetchStatus(),
-        fetchStats(),
-        fetchSignals(),
+        fetchBotData('V1'),
+        fetchBotData('V2'),
         fetchTrades(),
-        fetchBalance(),
         fetchLivePositions(),
         fetchFreqtradeData(),
     ]);
@@ -55,73 +52,88 @@ async function fetchStatus() {
     try {
         const res = await fetch(`${API}/api/status`);
         const data = await res.json();
-        const badge = document.getElementById('status-badge');
-        if (data.status === 'running') {
-            badge.textContent = 'en ligne';
-            badge.className = 'badge badge-online';
-        } else {
+        ['V1', 'V2'].forEach(ver => {
+            const v = ver.toLowerCase();
+            const botStatus = data.scanners?.[ver];
+            const badge = document.getElementById(`${v}-status`);
+            if (botStatus?.running) {
+                badge.textContent = 'en ligne';
+                badge.className = 'badge badge-online';
+            } else {
+                badge.textContent = 'offline';
+                badge.className = 'badge badge-offline';
+            }
+            document.getElementById(`${v}-active`).textContent = botStatus?.active_signals || 0;
+        });
+    } catch {
+        ['v1', 'v2'].forEach(v => {
+            const badge = document.getElementById(`${v}-status`);
             badge.textContent = 'offline';
             badge.className = 'badge badge-offline';
-        }
-        document.getElementById('stat-active').textContent = data.scanner?.active_signals || 0;
-    } catch {
-        document.getElementById('status-badge').textContent = 'offline';
-        document.getElementById('status-badge').className = 'badge badge-offline';
+        });
     }
 }
 
-async function fetchStats() {
+async function fetchBotData(version) {
+    const v = version.toLowerCase();
     try {
-        const res = await fetch(`${API}/api/paper/portfolio`);
-        const data = await res.json();
-        const trades = data.total_trades || 0;
-        const wins = data.wins || 0;
-        const winRate = trades > 0 ? Math.round((wins / trades) * 100) : 0;
-        const pnl = data.total_pnl || 0;
-
-        document.getElementById('stat-trades').textContent = trades;
-        document.getElementById('stat-wins').textContent = wins;
-        document.getElementById('stat-losses').textContent = data.losses || 0;
-        document.getElementById('stat-winrate').textContent = `${winRate}%`;
-        const pnlEl = document.getElementById('stat-pnl');
-        pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
-        pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-    } catch {}
-}
-
-async function fetchBalance() {
-    try {
-        const res = await fetch(`${API}/api/paper/portfolio`);
-        const data = await res.json();
-        const el = document.getElementById('balance-display');
-        const balance = data.current_balance || 0;
-        el.textContent = `$${balance.toFixed(2)}`;
-        el.style.color = balance >= (data.initial_balance || 100) ? 'var(--green)' : 'var(--red)';
-    } catch {}
-}
-
-async function fetchSignals() {
-    try {
-        const res = await fetch(`${API}/api/signals?limit=30`);
-        const data = await res.json();
-        renderSignals(data.signals || []);
-    } catch {
-        document.getElementById('signals-list').innerHTML =
-            '<div class="empty-state">Erreur de chargement</div>';
+        const [portfolioRes, signalsRes] = await Promise.all([
+            fetch(`${API}/api/paper/portfolio?bot_version=${version}`),
+            fetch(`${API}/api/signals?limit=30&bot_version=${version}`),
+        ]);
+        const portfolio = await portfolioRes.json();
+        const signals = await signalsRes.json();
+        updateBotSidebar(v, portfolio);
+        renderSignals(signals.signals || [], `${v}-signals-list`, version);
+    } catch (e) {
+        console.error(`fetchBotData(${version}):`, e);
     }
+}
+
+function updateBotSidebar(v, data) {
+    const trades = data.total_trades || 0;
+    const wins = data.wins || 0;
+    const losses = data.losses || 0;
+    const winRate = trades > 0 ? Math.round((wins / trades) * 100) : 0;
+    const pnl = data.total_pnl || 0;
+    const balance = data.current_balance || 0;
+
+    document.getElementById(`${v}-trades`).textContent = trades;
+    document.getElementById(`${v}-wins`).textContent = wins;
+    document.getElementById(`${v}-losses`).textContent = losses;
+    document.getElementById(`${v}-winrate`).textContent = `${winRate}%`;
+
+    const pnlEl = document.getElementById(`${v}-pnl`);
+    pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+    pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+    const balEl = document.getElementById(`${v}-balance`);
+    balEl.textContent = `$${balance.toFixed(2)}`;
+    balEl.style.color = balance >= (data.initial_balance || 100) ? 'var(--green)' : 'var(--red)';
 }
 
 async function fetchTrades() {
     try {
-        const res = await fetch(`${API}/api/trades?limit=30`);
-        const data = await res.json();
-        renderTrades(data.trades || []);
+        const [v1Res, v2Res] = await Promise.all([
+            fetch(`${API}/api/trades?limit=30&bot_version=V1`),
+            fetch(`${API}/api/trades?limit=30&bot_version=V2`),
+        ]);
+        const v1 = await v1Res.json();
+        const v2 = await v2Res.json();
+        const allTrades = [
+            ...(v1.trades || []).map(t => ({...t, bot_version: t.bot_version || 'V1'})),
+            ...(v2.trades || []).map(t => ({...t, bot_version: t.bot_version || 'V2'})),
+        ];
+        allTrades.sort((a, b) => new Date(b.entry_time || b.created_at) - new Date(a.entry_time || a.created_at));
+        renderTrades(allTrades);
     } catch {}
 }
 
 // --- Render ---
-function renderSignals(signals) {
-    const container = document.getElementById('signals-list');
+function renderSignals(signals, containerId, botVersion) {
+    containerId = containerId || 'v2-signals-list';
+    botVersion = botVersion || 'V2';
+    const container = document.getElementById(containerId);
     if (!signals.length) {
         container.innerHTML = '<div class="empty-state">Aucun signal pour le moment. Le scanner tourne...</div>';
         return;
@@ -189,10 +201,15 @@ function renderSignals(signals) {
         const testBadge = isTest ? '<span class="signal-test">SIMULATION</span>' : '';
         const expiredClass = (isExpired && !['executed'].includes(status)) ? 'signal-card-expired' : '';
 
+        const vBadge = botVersion === 'V1'
+            ? '<span class="v1-badge" style="font-size:9px;padding:1px 5px">V1</span>'
+            : '<span class="v2-badge" style="font-size:9px;padding:1px 5px">V2</span>';
+
         return `
-        <div class="signal-card ${isTest ? 'signal-card-test' : ''} ${expiredClass}" id="signal-card-${s.id || 0}" data-status="${status}">
+        <div class="signal-card ${isTest ? 'signal-card-test' : ''} ${expiredClass}" id="signal-card-${s.id || 0}" data-status="${status}" data-bot-version="${botVersion}">
             <div class="signal-header">
                 <div style="display:flex;align-items:center;gap:8px">
+                    ${vBadge}
                     <span class="signal-pair">${s.symbol}</span>
                     <span class="signal-mode">${s.mode}</span>
                     ${testBadge}
@@ -231,10 +248,15 @@ function renderTrades(trades) {
     container.innerHTML = trades.map(t => {
         const pnlClass = (t.pnl_usd || 0) >= 0 ? 'trade-pnl-pos' : 'trade-pnl-neg';
         const time = new Date(t.entry_time || t.created_at).toLocaleString('fr-FR');
+        const bv = t.bot_version || 'V2';
+        const badgeClass = bv === 'V1' ? 'v1-badge' : 'v2-badge';
         return `
         <div class="trade-card">
             <div>
-                <div style="font-weight:600">${t.symbol} ${t.direction?.toUpperCase()}</div>
+                <div style="font-weight:600;display:flex;align-items:center;gap:6px">
+                    <span class="${badgeClass}" style="font-size:9px;padding:1px 5px">${bv}</span>
+                    ${t.symbol} ${t.direction?.toUpperCase()}
+                </div>
                 <div style="font-size:11px;color:var(--text-secondary)">${time} | ${t.mode}</div>
             </div>
             <div>
@@ -256,9 +278,7 @@ function switchTab(tab) {
 
     if (tab === 'charts') {
         if (!chartInstance) initChart();
-        // Charger chart immediatement sans attendre les tickers
         if (!selectedPair) {
-            // Utiliser /api/pairs (rapide) pour avoir la 1ere paire
             fetch(`${API}/api/pairs`).then(r => r.json()).then(d => {
                 if (d.pairs && d.pairs.length && !selectedPair) {
                     selectedPair = d.pairs[0];
@@ -268,9 +288,8 @@ function switchTab(tab) {
         } else {
             loadChart();
         }
-        fetchTickers(); // en parallele
+        fetchTickers();
         if (!chartRefreshInterval) {
-            // Tickers refresh (prix dans les badges)
             chartRefreshInterval = setInterval(() => {
                 if (currentTab === 'charts') fetchTickers();
             }, 15000);
@@ -780,6 +799,7 @@ async function openExecModal(signalId, orderType, margin) {
     const card = document.getElementById(`signal-card-${signalId}`);
     if (!card) return;
 
+    const botVersion = card.dataset.botVersion || 'V2';
     const symbol = card.querySelector('.signal-pair')?.textContent || '?';
     const direction = card.querySelector('.signal-direction')?.textContent || '?';
     const leverage = card.querySelector('.signal-body .value:last-child')?.textContent || '10x';
@@ -788,7 +808,7 @@ async function openExecModal(signalId, orderType, margin) {
 
     let paperBalance = 0;
     try {
-        const pRes = await fetch(`${API}/api/paper/portfolio`);
+        const pRes = await fetch(`${API}/api/paper/portfolio?bot_version=${botVersion}`);
         const pData = await pRes.json();
         paperBalance = (pData.current_balance || 0) - (pData.reserved_margin || 0);
     } catch {}
@@ -897,8 +917,8 @@ function updateCountdowns() {
     document.querySelectorAll('.signal-countdown').forEach(el => {
         const sec = parseInt(el.textContent) - 1;
         if (sec <= 0) {
-            // Re-render les signaux pour afficher "Expire"
-            fetchSignals();
+            fetchBotData('V1');
+            fetchBotData('V2');
         } else {
             el.textContent = sec + 's';
             if (sec <= 5) el.style.color = 'var(--red)';
@@ -965,7 +985,8 @@ setInterval(updateCandleCountdown, 1000);
 updateCandleCountdown();
 
 // --- Positions live (WebSocket MEXC direct) ---
-let positionsData = [];   // positions depuis l'API
+let positionsDataV1 = [];
+let positionsDataV2 = [];
 let livePrices = {};      // symbol -> prix live
 let posMexcWs = null;
 let posMexcReconnect = null;
@@ -973,24 +994,33 @@ let posSubscribedSymbols = new Set();
 
 async function fetchLivePositions() {
     try {
-        const res = await fetch(`${API}/api/positions`);
-        const data = await res.json();
-        positionsData = (data.positions || []).filter(p => p.state !== 'closed');
+        const [v1Res, v2Res] = await Promise.all([
+            fetch(`${API}/api/positions?bot_version=V1`),
+            fetch(`${API}/api/positions?bot_version=V2`),
+        ]);
+        const v1 = await v1Res.json();
+        const v2 = await v2Res.json();
+        positionsDataV1 = (v1.positions || []).filter(p => p.state !== 'closed');
+        positionsDataV2 = (v2.positions || []).filter(p => p.state !== 'closed');
 
-        if (positionsData.length > 0) {
+        const all = [...positionsDataV1, ...positionsDataV2];
+        if (all.length > 0) {
             connectPosMexcWs();
             updatePositionsUI();
         } else {
             disconnectPosMexcWs();
-            document.getElementById('positions-live').innerHTML = '';
+            document.getElementById('v1-positions-live').innerHTML = '';
+            document.getElementById('v2-positions-live').innerHTML = '';
         }
     } catch {
-        document.getElementById('positions-live').innerHTML = '';
+        document.getElementById('v1-positions-live').innerHTML = '';
+        document.getElementById('v2-positions-live').innerHTML = '';
     }
 }
 
 function connectPosMexcWs() {
-    const symbols = new Set(positionsData.map(p => p.symbol));
+    const allPositions = [...positionsDataV1, ...positionsDataV2];
+    const symbols = new Set(allPositions.map(p => p.symbol));
     const mexcSymbols = new Map();
     symbols.forEach(s => {
         mexcSymbols.set(s, s.split(':')[0].replace('-', '_').replace('/', '_'));
@@ -1051,7 +1081,7 @@ function connectPosMexcWs() {
         if (posMexcWs?._ping) clearInterval(posMexcWs._ping);
         posMexcWs = null;
         // Reconnecter si on a encore des positions
-        if (positionsData.length > 0) {
+        if (positionsDataV1.length > 0 || positionsDataV2.length > 0) {
             posMexcReconnect = setTimeout(connectPosMexcWs, 2000);
         }
     };
@@ -1071,13 +1101,19 @@ function disconnectPosMexcWs() {
 }
 
 function updatePositionsUI() {
-    const result = positionsData.map(p => {
+    const v1Result = positionsDataV1.map(p => {
         const cur = livePrices[p.symbol] || p.entry_price;
         return calcLivePnl(p, cur);
     });
-    // Trier: profits en haut, pertes en bas
-    result.sort((a, b) => (b.total_pnl || 0) - (a.total_pnl || 0));
-    renderLivePositions(result);
+    v1Result.sort((a, b) => (b.total_pnl || 0) - (a.total_pnl || 0));
+    renderLivePositions(v1Result, 'v1-positions-live');
+
+    const v2Result = positionsDataV2.map(p => {
+        const cur = livePrices[p.symbol] || p.entry_price;
+        return calcLivePnl(p, cur);
+    });
+    v2Result.sort((a, b) => (b.total_pnl || 0) - (a.total_pnl || 0));
+    renderLivePositions(v2Result, 'v2-positions-live');
 }
 
 function calcLivePnl(pos, currentPrice) {
@@ -1113,8 +1149,8 @@ function calcLivePnl(pos, currentPrice) {
     return { ...pos, current_price: currentPrice, total_pnl: total, pnl_pct: pnlPct, progress };
 }
 
-function renderLivePositions(positions) {
-    const container = document.getElementById('positions-live');
+function renderLivePositions(positions, containerId) {
+    const container = document.getElementById(containerId || 'v2-positions-live');
     if (!positions.length) {
         container.innerHTML = '';
         return;
@@ -1194,7 +1230,8 @@ async function closePosition(posId, btn) {
     // Feedback instantane
     if (btn) { btn.disabled = true; btn.textContent = '...'; }
     // Envoyer le prix live du WS pour eviter un appel MEXC lent
-    const pos = positionsData.find(p => p.id === posId);
+    const allPos = [...positionsDataV1, ...positionsDataV2];
+    const pos = allPos.find(p => p.id === posId);
     const livePrice = pos ? (livePrices[pos.symbol] || 0) : 0;
     try {
         const res = await fetch(`${API}/api/positions/${posId}/close`, {
@@ -1210,10 +1247,11 @@ async function closePosition(posId, btn) {
 }
 
 // --- Paper Trading Reset ---
-async function resetPaper() {
-    if (!confirm('Remettre le portefeuille paper a 100$ ?\nTous les trades et signaux seront effaces.')) return;
+async function resetPaper(botVersion) {
+    botVersion = botVersion || 'V2';
+    if (!confirm(`Remettre le portefeuille ${botVersion} a 100$ ?\nTous les trades et signaux ${botVersion} seront effaces.`)) return;
     try {
-        await fetch(`${API}/api/paper/reset`, { method: 'POST' });
+        await fetch(`${API}/api/paper/reset?bot_version=${botVersion}`, { method: 'POST' });
         refreshAll();
     } catch (e) {
         console.error('Reset erreur:', e);

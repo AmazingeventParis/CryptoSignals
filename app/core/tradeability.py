@@ -1,46 +1,57 @@
 """
 COUCHE A : Filtre Tradeability
 Determine si le marche est tradable ou non pour une paire donnee.
+Accepte settings en parametre pour supporter V1 et V2.
 """
 import logging
 from app.config import SETTINGS
 
 logger = logging.getLogger(__name__)
 
-THRESHOLDS = SETTINGS["tradeability"]["thresholds"]
-WEIGHTS = SETTINGS["tradeability"]["weights"]
-MIN_SCORE = SETTINGS["tradeability"]["min_score"]
+
+def _get_thresholds(settings=None):
+    s = settings or SETTINGS
+    return s["tradeability"]["thresholds"]
 
 
-def check_volatility(atr_current: float, atr_mean: float) -> tuple[float, str]:
+def _get_weights(settings=None):
+    s = settings or SETTINGS
+    return s["tradeability"]["weights"]
+
+
+def _get_min_score(settings=None):
+    s = settings or SETTINGS
+    return s["tradeability"]["min_score"]
+
+
+def check_volatility(atr_current: float, atr_mean: float, thresholds=None) -> tuple[float, str]:
+    t = thresholds or _get_thresholds()
     if atr_mean == 0:
         return 0.0, "ATR moyen = 0 (pas de donnees)"
     ratio = atr_current / atr_mean
-    min_r = THRESHOLDS["atr_min_ratio"]
-    max_r = THRESHOLDS["atr_max_ratio"]
+    min_r = t["atr_min_ratio"]
+    max_r = t["atr_max_ratio"]
 
     if ratio < min_r:
         return 0.0, f"Volatilite trop basse (ATR ratio {ratio:.2f} < {min_r})"
     elif ratio > max_r:
         return 0.0, f"Volatilite trop haute (ATR ratio {ratio:.2f} > {max_r})"
     elif 0.8 <= ratio <= 2.0:
-        # Zone optimale : volatilite normale a moderee
         return 1.0, f"ATR ratio {ratio:.2f} OK"
     elif ratio < 0.8:
-        # Entre min_r (0.5) et 0.8 : montee lineaire
         score = (ratio - min_r) / (0.8 - min_r)
         return max(0.0, min(1.0, score)), f"ATR ratio {ratio:.2f} OK"
     else:
-        # Entre 2.0 et max_r (3.0) : descente lineaire
         score = 1.0 - (ratio - 2.0) / (max_r - 2.0)
         return max(0.0, min(1.0, score)), f"ATR ratio {ratio:.2f} OK"
 
 
-def check_volume(vol_current: float, vol_mean: float) -> tuple[float, str]:
+def check_volume(vol_current: float, vol_mean: float, thresholds=None) -> tuple[float, str]:
+    t = thresholds or _get_thresholds()
     if vol_mean == 0:
         return 0.0, "Volume moyen = 0"
     ratio = vol_current / vol_mean
-    min_r = THRESHOLDS["volume_min_ratio"]
+    min_r = t["volume_min_ratio"]
 
     if ratio < min_r:
         return 0.0, f"Volume trop bas ({ratio:.2f}x < {min_r}x moyenne)"
@@ -51,16 +62,16 @@ def check_volume(vol_current: float, vol_mean: float) -> tuple[float, str]:
         return min(1.0, score), f"Volume {ratio:.2f}x moyenne"
 
 
-def check_spread(spread_pct: float, mode: str) -> tuple[float, str]:
-    # Si orderbook indisponible (999 = valeur par defaut), score neutre-positif
+def check_spread(spread_pct: float, mode: str, thresholds=None) -> tuple[float, str]:
+    t = thresholds or _get_thresholds()
     if spread_pct >= 900:
         return 0.7, "Spread non disponible (orderbook indisponible)"
 
-    kill = THRESHOLDS["spread_kill"]
+    kill = t["spread_kill"]
     if spread_pct >= kill:
         return -1.0, f"Spread {spread_pct:.4f}% > {kill}% KILL"
 
-    max_spread = THRESHOLDS["spread_max_scalp"] if mode == "scalping" else THRESHOLDS["spread_max_swing"]
+    max_spread = t["spread_max_scalp"] if mode == "scalping" else t["spread_max_swing"]
     if spread_pct >= max_spread:
         return 0.0, f"Spread {spread_pct:.4f}% > {max_spread}% max"
     else:
@@ -70,7 +81,6 @@ def check_spread(spread_pct: float, mode: str) -> tuple[float, str]:
 
 def check_depth(bid_depth: float, ask_depth: float, min_depth: float = 1000) -> tuple[float, str]:
     total = bid_depth + ask_depth
-    # Si orderbook indisponible, score neutre-positif
     if total == 0:
         return 0.7, "Profondeur non disponible (orderbook indisponible)"
     if total < min_depth:
@@ -82,10 +92,11 @@ def check_depth(bid_depth: float, ask_depth: float, min_depth: float = 1000) -> 
         return min(1.0, score), f"Profondeur {total:.0f} OK"
 
 
-def check_funding(funding_rate: float) -> tuple[float, str]:
+def check_funding(funding_rate: float, thresholds=None) -> tuple[float, str]:
+    t = thresholds or _get_thresholds()
     abs_fr = abs(funding_rate)
-    kill = THRESHOLDS["funding_kill"]
-    max_fr = THRESHOLDS["funding_max"]
+    kill = t["funding_kill"]
+    max_fr = t["funding_max"]
 
     if abs_fr >= kill:
         return -1.0, f"Funding {funding_rate:+.4f}% EXTREME - KILL"
@@ -96,8 +107,9 @@ def check_funding(funding_rate: float) -> tuple[float, str]:
         return score, f"Funding {funding_rate:+.4f}% OK"
 
 
-def check_oi_stability(oi_change_pct: float) -> tuple[float, str]:
-    max_drop = THRESHOLDS["oi_drop_max_pct"]
+def check_oi_stability(oi_change_pct: float, thresholds=None) -> tuple[float, str]:
+    t = thresholds or _get_thresholds()
+    max_drop = t["oi_drop_max_pct"]
     if oi_change_pct < -max_drop:
         return 0.0, f"OI chute {oi_change_pct:.1f}% (cascade liquidations)"
     elif abs(oi_change_pct) < 1.0:
@@ -109,7 +121,7 @@ def check_oi_stability(oi_change_pct: float) -> tuple[float, str]:
 
 def check_adx_trend(adx_val: float) -> tuple[float, str]:
     """ADX > 25 = tendance forte (bon pour trader), < 20 = range (prudence)."""
-    if adx_val is None or (isinstance(adx_val, float) and (adx_val != adx_val)):  # NaN check
+    if adx_val is None or (isinstance(adx_val, float) and (adx_val != adx_val)):
         return 0.5, "ADX indisponible"
     if adx_val >= 30:
         return 1.0, f"ADX {adx_val:.1f} tendance forte"
@@ -133,18 +145,22 @@ def evaluate_tradeability(
     oi_change_pct: float,
     mode: str = "scalping",
     adx_val: float = None,
+    settings=None,
 ) -> dict:
-    checks = {}
+    t = _get_thresholds(settings)
+    w = _get_weights(settings)
+    min_score = _get_min_score(settings)
 
-    checks["volatility"] = check_volatility(atr_current, atr_mean)
-    checks["volume"] = check_volume(vol_current, vol_mean)
-    checks["spread"] = check_spread(spread_pct, mode)
+    checks = {}
+    checks["volatility"] = check_volatility(atr_current, atr_mean, t)
+    checks["volume"] = check_volume(vol_current, vol_mean, t)
+    checks["spread"] = check_spread(spread_pct, mode, t)
     checks["depth"] = check_depth(bid_depth, ask_depth)
-    checks["funding"] = check_funding(funding_rate)
-    checks["oi_stability"] = check_oi_stability(oi_change_pct)
+    checks["funding"] = check_funding(funding_rate, t)
+    checks["oi_stability"] = check_oi_stability(oi_change_pct, t)
     checks["adx_trend"] = check_adx_trend(adx_val)
 
-    # Kill switches : si un check retourne -1, NON-TRADABLE immediat
+    # Kill switches
     for name, (score, reason) in checks.items():
         if score == -1.0:
             return {
@@ -154,12 +170,11 @@ def evaluate_tradeability(
                 "checks": {k: {"score": v[0], "reason": v[1]} for k, v in checks.items()},
             }
 
-    # Score pondere
     weighted_score = sum(
-        checks[name][0] * WEIGHTS[name] for name in WEIGHTS if name in checks
+        checks[name][0] * w[name] for name in w if name in checks
     )
 
-    is_tradable = weighted_score >= MIN_SCORE
+    is_tradable = weighted_score >= min_score
 
     return {
         "is_tradable": is_tradable,

@@ -8,51 +8,58 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=64">
+    <link rel="stylesheet" href="/static/style.css?v=65">
 </head>
 <body>
     <div id="app">
         <div class="desktop-layout">
-        <!-- SIDEBAR (gauche sur desktop) -->
+        <!-- SIDEBAR -->
         <aside class="sidebar">
-            <!-- Header -->
-            <header class="header">
-                <div class="header-left">
-                    <h1>Crypto Signals</h1>
-                    <span id="status-badge" class="badge badge-offline">offline</span>
-                </div>
-                <div class="header-right">
-                    <span id="balance-display" class="balance">--</span>
-                    <button onclick="resetPaper()" class="btn-icon" title="Reset portfolio" style="font-size:12px">RST</button>
-                    <button onclick="refreshAll()" class="btn-icon" title="Rafraichir">&#x21bb;</button>
-                </div>
-            </header>
+            <div style="display:flex;justify-content:flex-end;padding:8px 0 0">
+                <button onclick="refreshAll()" class="btn-icon" title="Rafraichir">&#x21bb;</button>
+            </div>
 
-            <!-- Stats cards (ordre: P&L, WinRate, Gagnes, Perdus, Signaux, Trades) -->
-            <div class="stats-row">
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-pnl">$0</div>
-                    <div class="stat-label">P&L Total</div>
+            <!-- Bot V1 (strict) -->
+            <div class="bot-section">
+                <header class="header bot-header">
+                    <div class="header-left">
+                        <h1><span class="v1-badge">V1</span> Bot V1</h1>
+                        <span id="v1-status" class="badge badge-offline">offline</span>
+                    </div>
+                    <div class="header-right">
+                        <span id="v1-balance" class="balance">--</span>
+                        <button onclick="resetPaper('V1')" class="btn-icon" title="Reset V1" style="font-size:12px">RST</button>
+                    </div>
+                </header>
+                <div class="stats-row">
+                    <div class="stat-card"><div class="stat-value" id="v1-pnl">$0</div><div class="stat-label">P&L</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v1-winrate">0%</div><div class="stat-label">Win Rate</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v1-wins" style="color:var(--green)">0</div><div class="stat-label">Gagnes</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v1-losses" style="color:var(--red)">0</div><div class="stat-label">Perdus</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v1-active">0</div><div class="stat-label">Signaux</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v1-trades">0</div><div class="stat-label">Trades</div></div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-winrate">0%</div>
-                    <div class="stat-label">Win Rate</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-wins" style="color:var(--green)">0</div>
-                    <div class="stat-label">Gagnes</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-losses" style="color:var(--red)">0</div>
-                    <div class="stat-label">Perdus</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-active">0</div>
-                    <div class="stat-label">Signaux actifs</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-trades">0</div>
-                    <div class="stat-label">Trades</div>
+            </div>
+
+            <!-- Bot V2 (assoupli) -->
+            <div class="bot-section">
+                <header class="header bot-header">
+                    <div class="header-left">
+                        <h1><span class="v2-badge">V2</span> Bot V2</h1>
+                        <span id="v2-status" class="badge badge-offline">offline</span>
+                    </div>
+                    <div class="header-right">
+                        <span id="v2-balance" class="balance">--</span>
+                        <button onclick="resetPaper('V2')" class="btn-icon" title="Reset V2" style="font-size:12px">RST</button>
+                    </div>
+                </header>
+                <div class="stats-row">
+                    <div class="stat-card"><div class="stat-value" id="v2-pnl">$0</div><div class="stat-label">P&L</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v2-winrate">0%</div><div class="stat-label">Win Rate</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v2-wins" style="color:var(--green)">0</div><div class="stat-label">Gagnes</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v2-losses" style="color:var(--red)">0</div><div class="stat-label">Perdus</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v2-active">0</div><div class="stat-label">Signaux</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v2-trades">0</div><div class="stat-label">Trades</div></div>
                 </div>
             </div>
 
@@ -68,57 +75,46 @@
                     </div>
                 </header>
                 <div class="stats-row">
-                    <div class="stat-card">
-                        <div class="stat-value" id="ft-pnl">$0</div>
-                        <div class="stat-label">P&L Total</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="ft-winrate">0%</div>
-                        <div class="stat-label">Win Rate</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="ft-wins" style="color:var(--green)">0</div>
-                        <div class="stat-label">Gagnes</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="ft-losses" style="color:var(--red)">0</div>
-                        <div class="stat-label">Perdus</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="ft-active">0</div>
-                        <div class="stat-label">Signaux actifs</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="ft-trades">0</div>
-                        <div class="stat-label">Trades</div>
-                    </div>
+                    <div class="stat-card"><div class="stat-value" id="ft-pnl">$0</div><div class="stat-label">P&L</div></div>
+                    <div class="stat-card"><div class="stat-value" id="ft-winrate">0%</div><div class="stat-label">Win Rate</div></div>
+                    <div class="stat-card"><div class="stat-value" id="ft-wins" style="color:var(--green)">0</div><div class="stat-label">Gagnes</div></div>
+                    <div class="stat-card"><div class="stat-value" id="ft-losses" style="color:var(--red)">0</div><div class="stat-label">Perdus</div></div>
+                    <div class="stat-card"><div class="stat-value" id="ft-active">0</div><div class="stat-label">Signaux</div></div>
+                    <div class="stat-card"><div class="stat-value" id="ft-trades">0</div><div class="stat-label">Trades</div></div>
                 </div>
             </div>
         </aside>
 
-        <!-- MAIN CONTENT (droite sur desktop) -->
+        <!-- MAIN CONTENT -->
         <main class="main-content">
             <!-- Tabs -->
             <div class="tabs">
-                <button class="tab active" onclick="switchTab('signals')">Crypto Signals</button>
+                <button class="tab active" onclick="switchTab('v1')"><span class="v1-badge-sm">V1</span> Bot V1</button>
+                <button class="tab" onclick="switchTab('v2')"><span class="v2-badge-sm">V2</span> Bot V2</button>
                 <button class="tab" onclick="switchTab('freqtrade')"><span class="ft-badge-sm">FT</span> Freqtrade</button>
                 <button class="tab" onclick="switchTab('charts')">Charts</button>
                 <button class="tab" onclick="switchTab('trades')">Journal</button>
                 <button class="tab" onclick="switchTab('pairs')">Paires</button>
             </div>
 
-            <!-- Signals Tab -->
-            <div id="tab-signals" class="tab-content active">
-                <!-- Positions actives (live) -->
-                <div id="positions-live" class="positions-live"></div>
-                <div id="signals-list" class="signals-list">
-                    <div class="empty-state">Chargement des signaux...</div>
+            <!-- V1 Tab -->
+            <div id="tab-v1" class="tab-content active">
+                <div id="v1-positions-live" class="positions-live"></div>
+                <div id="v1-signals-list" class="signals-list">
+                    <div class="empty-state">Chargement des signaux V1...</div>
+                </div>
+            </div>
+
+            <!-- V2 Tab -->
+            <div id="tab-v2" class="tab-content">
+                <div id="v2-positions-live" class="positions-live"></div>
+                <div id="v2-signals-list" class="signals-list">
+                    <div class="empty-state">Chargement des signaux V2...</div>
                 </div>
             </div>
 
             <!-- Charts Tab -->
             <div id="tab-charts" class="tab-content">
-                <!-- Pair selector -->
                 <div class="chart-controls">
                     <div class="pair-selector" id="pair-selector"></div>
                     <div class="tf-selector">
@@ -135,15 +131,12 @@
                         <span id="candle-countdown" class="candle-countdown"></span>
                     </div>
                 </div>
-                <!-- Price ticker bar -->
                 <div class="ticker-bar" id="ticker-bar"></div>
-                <!-- Chart container -->
                 <div id="chart-container" class="chart-container"></div>
-                <!-- Volume chart -->
                 <div id="volume-container" class="volume-container"></div>
             </div>
 
-            <!-- Trades Tab -->
+            <!-- Trades/Journal Tab -->
             <div id="tab-trades" class="tab-content">
                 <div id="trades-list" class="trades-list">
                     <div class="empty-state">Aucun trade enregistre</div>
@@ -186,7 +179,7 @@
             </div>
         </div>
 
-        <!-- Modal Chart Popup (pour positions) -->
+        <!-- Modal Chart Popup -->
         <div id="chart-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeChartModal()">
             <div class="modal chart-modal-lg">
                 <div class="modal-header">
@@ -225,7 +218,6 @@
 
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <script>
-    // Purger ancien Service Worker
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then(regs => {
             regs.forEach(r => r.unregister());
@@ -233,6 +225,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=64"></script>
+    <script src="/static/app.js?v=65"></script>
 </body>
 </html>

@@ -4,6 +4,7 @@ Position Monitor : Surveille les positions en TEMPS REEL via WebSocket MEXC.
 - Detecte TP1/TP2/TP3/SL via le prix en temps reel
 - Deplace le SL (breakeven apres TP1, TP1 price apres TP2)
 - Polling lent (30s) en backup pour confirmer via fetch_positions
+Accepte bot_version pour supporter V1 et V2 en parallele.
 """
 import asyncio
 import json
@@ -20,7 +21,6 @@ from app.database import (
     insert_trade,
     insert_active_position,
 )
-# from app.services.telegram_bot import send_trade_update  # DISABLED
 
 
 async def send_trade_update(*args, **kwargs):
@@ -34,30 +34,29 @@ WS_URL = "wss://contract.mexc.com/edge"
 
 
 class PositionMonitor:
-    def __init__(self):
+    def __init__(self, bot_version="V2", settings=None):
+        self.bot_version = bot_version
+        self.settings = settings
         self.running = False
-        self._positions: dict[int, dict] = {}  # pos_id -> pos data (cache)
-        self._ws_tasks: dict[str, asyncio.Task] = {}  # symbol -> ws task
-        self._processing: set = set()  # pos_ids en cours de traitement (anti-doublon)
-        self._on_close_callbacks: list = []  # callbacks appeles quand une position ferme
+        self._positions: dict[int, dict] = {}
+        self._ws_tasks: dict[str, asyncio.Task] = {}
+        self._processing: set = set()
+        self._on_close_callbacks: list = []
 
     def add_on_close_callback(self, callback):
-        """Ajoute un callback appele a la fermeture d'une position: callback(pos_id, pnl_usd)."""
         self._on_close_callbacks.append(callback)
 
     async def start(self):
         self.running = True
-        logger.info("PositionMonitor demarre (WebSocket temps reel)")
+        logger.info(f"PositionMonitor [{self.bot_version}] demarre (WebSocket temps reel)")
 
-        # Charger les positions existantes (recovery apres restart)
         await self._reload_positions()
 
-        # Boucle backup lente
         while self.running:
             try:
                 await self._backup_check()
             except Exception as e:
-                logger.error(f"Erreur backup monitor: {e}", exc_info=True)
+                logger.error(f"[{self.bot_version}] Erreur backup monitor: {e}", exc_info=True)
             await asyncio.sleep(BACKUP_POLL_INTERVAL)
 
     async def stop(self):
@@ -65,16 +64,15 @@ class PositionMonitor:
         for symbol, task in self._ws_tasks.items():
             task.cancel()
         self._ws_tasks.clear()
-        logger.info("PositionMonitor arrete")
+        logger.info(f"PositionMonitor [{self.bot_version}] arrete")
 
     async def register_trade(self, signal: dict, result: dict) -> int | None:
         if not result.get("success"):
             return None
 
-        # Verifier doublon symbol+direction
         for p in self._positions.values():
             if p["symbol"] == signal["symbol"] and p["direction"] == signal["direction"] and p.get("state") != "closed":
-                logger.warning(f"Position deja active pour {signal['symbol']} {signal['direction']}")
+                logger.warning(f"[{self.bot_version}] Position deja active pour {signal['symbol']} {signal['direction']}")
                 return None
 
         pos_data = {
@@ -101,6 +99,7 @@ class PositionMonitor:
             "entry_order_id": result.get("entry_order_id"),
             "mode": signal.get("mode"),
             "setup_type": signal.get("setup_type", "unknown"),
+            "bot_version": self.bot_version,
         }
 
         pos_id = await insert_active_position(pos_data)
@@ -112,9 +111,8 @@ class PositionMonitor:
         pos_data["sl_hit"] = 0
 
         self._positions[pos_id] = pos_data
-        logger.info(f"Position enregistree: {signal['symbol']} {signal['direction']} qty={result['quantity']} (id={pos_id})")
+        logger.info(f"[{self.bot_version}] Position enregistree: {signal['symbol']} {signal['direction']} qty={result['quantity']} (id={pos_id})")
 
-        # Demarrer le WebSocket temps reel pour ce symbol
         self._ensure_ws(signal["symbol"])
         return pos_id
 
@@ -124,7 +122,7 @@ class PositionMonitor:
         if symbol in self._ws_tasks and not self._ws_tasks[symbol].done():
             return
         self._ws_tasks[symbol] = asyncio.create_task(self._ws_price_stream(symbol))
-        logger.info(f"WS prix temps reel demarre: {symbol}")
+        logger.info(f"[{self.bot_version}] WS prix temps reel demarre: {symbol}")
 
     async def _ws_price_stream(self, symbol: str):
         mexc_symbol = symbol.split(":")[0].replace("-", "_").replace("/", "_")
@@ -132,12 +130,11 @@ class PositionMonitor:
         while self.running:
             try:
                 async with websockets.connect(WS_URL) as ws:
-                    # S'abonner aux deals (chaque trade = prix en temps reel)
                     await ws.send(json.dumps({
                         "method": "sub.deal",
                         "param": {"symbol": mexc_symbol}
                     }))
-                    logger.info(f"WS connecte: {symbol} (sub.deal)")
+                    logger.info(f"[{self.bot_version}] WS connecte: {symbol} (sub.deal)")
 
                     ping_task = asyncio.create_task(self._ws_keepalive(ws))
 
@@ -160,12 +157,11 @@ class PositionMonitor:
 
             except (websockets.ConnectionClosed, Exception) as e:
                 if self.running:
-                    logger.warning(f"WS {symbol} deconnecte: {e}, reconnexion dans 3s")
+                    logger.warning(f"[{self.bot_version}] WS {symbol} deconnecte: {e}, reconnexion dans 3s")
                     await asyncio.sleep(3)
 
-            # Verifier s'il reste des positions actives pour ce symbol
             if not self._has_active_positions(symbol):
-                logger.info(f"WS {symbol} arrete: plus de positions actives")
+                logger.info(f"[{self.bot_version}] WS {symbol} arrete: plus de positions actives")
                 break
 
     async def _ws_keepalive(self, ws):
@@ -202,7 +198,6 @@ class PositionMonitor:
                         self._processing.discard(pos_id)
                     continue
 
-                # SL (avant TP1)
                 sl_hit = (price <= pos["stop_loss"]) if direction == "long" else (price >= pos["stop_loss"])
                 if sl_hit:
                     self._processing.add(pos_id)
@@ -223,7 +218,6 @@ class PositionMonitor:
                         self._processing.discard(pos_id)
                     continue
 
-                # SL breakeven
                 sl_hit = (price <= pos["stop_loss"]) if direction == "long" else (price >= pos["stop_loss"])
                 if sl_hit:
                     self._processing.add(pos_id)
@@ -244,7 +238,6 @@ class PositionMonitor:
                         self._processing.discard(pos_id)
                     continue
 
-                # SL trailing
                 sl_hit = (price <= pos["stop_loss"]) if direction == "long" else (price >= pos["stop_loss"])
                 if sl_hit:
                     self._processing.add(pos_id)
@@ -254,18 +247,17 @@ class PositionMonitor:
                         self._processing.discard(pos_id)
                     continue
 
-    # --- Backup polling (confirmation via exchange) ---
+    # --- Backup polling ---
 
     async def _backup_check(self):
         await self._reload_positions()
 
     async def _reload_positions(self):
-        positions = await get_active_positions()
+        positions = await get_active_positions(bot_version=self.bot_version)
         for pos in positions:
             self._positions[pos["id"]] = pos
             self._ensure_ws(pos["symbol"])
 
-        # Nettoyer les positions fermees du cache
         active_ids = {p["id"] for p in positions}
         for pid in list(self._positions.keys()):
             if pid not in active_ids:
@@ -276,7 +268,7 @@ class PositionMonitor:
     async def _handle_tp1_hit(self, pos: dict):
         symbol = pos["symbol"]
         entry_price = pos["entry_price"]
-        logger.info(f"TP1 HIT {symbol} - SL -> breakeven ({entry_price})")
+        logger.info(f"[{self.bot_version}] TP1 HIT {symbol} - SL -> breakeven ({entry_price})")
 
         await self._cancel_order_safe(pos["sl_order_id"], symbol)
 
@@ -291,7 +283,6 @@ class PositionMonitor:
             "state": "breakeven",
         })
 
-        # Mettre a jour le cache
         pos["tp1_hit"] = 1
         pos["sl_order_id"] = new_sl_id
         pos["stop_loss"] = entry_price
@@ -307,7 +298,7 @@ class PositionMonitor:
     async def _handle_tp2_hit(self, pos: dict):
         symbol = pos["symbol"]
         tp1_price = pos["tp1"]
-        logger.info(f"TP2 HIT {symbol} - SL -> TP1 ({tp1_price})")
+        logger.info(f"[{self.bot_version}] TP2 HIT {symbol} - SL -> TP1 ({tp1_price})")
 
         await self._cancel_order_safe(pos["sl_order_id"], symbol)
 
@@ -336,7 +327,7 @@ class PositionMonitor:
 
     async def _handle_tp3_hit(self, pos: dict):
         symbol = pos["symbol"]
-        logger.info(f"TP3 HIT {symbol} - position fermee")
+        logger.info(f"[{self.bot_version}] TP3 HIT {symbol} - position fermee")
 
         await update_position(pos["id"], {"tp3_hit": 1})
         pos["tp3_hit"] = 1
@@ -353,7 +344,7 @@ class PositionMonitor:
     async def _handle_sl_hit(self, pos: dict):
         symbol = pos["symbol"]
         state = pos["state"]
-        logger.info(f"SL HIT {symbol} (state={state})")
+        logger.info(f"[{self.bot_version}] SL HIT {symbol} (state={state})")
 
         await self._cancel_remaining_tp_orders(pos)
         await update_position(pos["id"], {"sl_hit": 1})
@@ -472,10 +463,11 @@ class PositionMonitor:
             "exit_time": now,
             "duration_seconds": duration,
             "notes": f"{close_reason} tp1={pos.get('tp1_hit',0)} tp2={pos.get('tp2_hit',0)} tp3={pos.get('tp3_hit',0)}",
+            "bot_version": self.bot_version,
         })
-        logger.info(f"Trade journalise: {pos['symbol']} {result} PnL={pnl_usd:.2f}$ ({close_reason})")
+        logger.info(f"[{self.bot_version}] Trade journalise: {pos['symbol']} {result} PnL={pnl_usd:.2f}$ ({close_reason})")
 
-        # Apprentissage : enregistrer le resultat par setup/symbol/mode
+        # Apprentissage
         try:
             from app.core.trade_learner import trade_learner
             setup_type = pos.get("setup_type", "unknown")
@@ -491,7 +483,6 @@ class PositionMonitor:
         except Exception as e:
             logger.error(f"Erreur trade_learner: {e}")
 
-        # Appeler les callbacks de fermeture (paper trader etc.)
         for cb in self._on_close_callbacks:
             try:
                 await cb(pos["id"], pnl_usd)
@@ -507,7 +498,3 @@ class PositionMonitor:
         elif price >= 0.01:
             return 6
         return 8
-
-
-# Singleton
-position_monitor = PositionMonitor()

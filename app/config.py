@@ -11,12 +11,16 @@ DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
 
-def load_settings() -> dict:
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+def load_settings(path=None) -> dict:
+    p = path or CONFIG_PATH
+    with open(p, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
-SETTINGS = load_settings()
+# Charger les 2 configs V1 et V2
+SETTINGS_V1 = load_settings(BASE_DIR / "config" / "settings_V1.yaml")
+SETTINGS_V2 = load_settings(BASE_DIR / "config" / "settings_V2.yaml")
+SETTINGS = SETTINGS_V2  # Default retro-compat
 
 # Env vars
 MEXC_API_KEY = os.getenv("MEXC_API_KEY", "")
@@ -33,14 +37,18 @@ FINNHUB_TOKEN = os.getenv("FINNHUB_TOKEN", "")
 DB_PATH = DATA_DIR / "signals.db"
 
 
-def get_enabled_pairs() -> list[str]:
-    return [p["symbol"] for p in SETTINGS["pairs"] if p.get("enabled", True)]
+def get_enabled_pairs(settings=None) -> list[str]:
+    s = settings or SETTINGS
+    return [p["symbol"] for p in s["pairs"] if p.get("enabled", True)]
 
 
-def get_mode_config(mode: str) -> dict:
-    return SETTINGS.get(mode, {})
+def get_mode_config(mode: str, settings=None) -> dict:
+    s = settings or SETTINGS
+    return s.get(mode, {})
 
 
 def reload_settings():
-    global SETTINGS
-    SETTINGS = load_settings()
+    global SETTINGS, SETTINGS_V1, SETTINGS_V2
+    SETTINGS_V1 = load_settings(BASE_DIR / "config" / "settings_V1.yaml")
+    SETTINGS_V2 = load_settings(BASE_DIR / "config" / "settings_V2.yaml")
+    SETTINGS = SETTINGS_V2

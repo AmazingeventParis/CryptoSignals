@@ -5,10 +5,8 @@ import asyncio
 import httpx
 from fastapi import APIRouter, Query
 from app.database import get_signals, get_trades, get_stats, get_active_positions
-from app.core.scanner import scanner
 from app.core.market_data import market_data
-from app.config import get_enabled_pairs, SETTINGS, APP_MODE, reload_settings, get_mode_config
-from app.core.signal_engine import analyze_pair
+from app.config import get_enabled_pairs, SETTINGS, SETTINGS_V1, SETTINGS_V2, APP_MODE, reload_settings, get_mode_config
 
 router = APIRouter(prefix="/api")
 
@@ -17,12 +15,21 @@ FT_URL = "https://freqtrade.swipego.app"
 FT_AUTH = ("admin", "Laurytal2")
 
 
+def _get_bot_instances():
+    from app.main import bot_instances
+    return bot_instances
+
+
 @router.get("/status")
 async def get_status():
+    bots = _get_bot_instances()
     return {
-        "status": "running" if scanner.running else "stopped",
+        "status": "running",
         "mode": APP_MODE,
-        "scanner": scanner.get_status(),
+        "scanners": {
+            "V1": bots["V1"]["scanner"].get_status(),
+            "V2": bots["V2"]["scanner"].get_status(),
+        },
     }
 
 
@@ -31,20 +38,24 @@ async def list_signals(
     limit: int = Query(50, ge=1, le=500),
     symbol: str = Query(None),
     mode: str = Query(None),
+    bot_version: str = Query(None),
 ):
-    signals = await get_signals(limit=limit, symbol=symbol, mode=mode)
+    signals = await get_signals(limit=limit, symbol=symbol, mode=mode, bot_version=bot_version)
     return {"signals": signals, "count": len(signals)}
 
 
 @router.get("/trades")
-async def list_trades(limit: int = Query(50, ge=1, le=500)):
-    trades = await get_trades(limit=limit)
+async def list_trades(
+    limit: int = Query(50, ge=1, le=500),
+    bot_version: str = Query(None),
+):
+    trades = await get_trades(limit=limit, bot_version=bot_version)
     return {"trades": trades, "count": len(trades)}
 
 
 @router.get("/stats")
-async def trading_stats():
-    stats = await get_stats()
+async def trading_stats(bot_version: str = Query(None)):
+    stats = await get_stats(bot_version=bot_version)
     return stats
 
 
@@ -123,16 +134,18 @@ async def reload_config():
 
 
 @router.get("/debug/{symbol}")
-async def debug_pair(symbol: str, mode: str = Query("scalping")):
+async def debug_pair(symbol: str, mode: str = Query("scalping"), bot_version: str = Query("V2")):
     """Debug: analyse une paire et retourne le resultat complet."""
+    from app.core.signal_engine import analyze_pair
     symbol_fmt = symbol.replace("-", "/")
-    mode_cfg = get_mode_config(mode)
+    s = SETTINGS_V1 if bot_version == "V1" else SETTINGS_V2
+    mode_cfg = get_mode_config(mode, s)
     if not mode_cfg:
         return {"error": "Mode inconnu"}
 
     tfs = mode_cfg["timeframes"]["analysis"] + [mode_cfg["timeframes"]["filter"]]
     data = await market_data.fetch_all_data(symbol_fmt, tfs)
-    result = await analyze_pair(symbol_fmt, data, mode)
+    result = await analyze_pair(symbol_fmt, data, mode, settings=s)
     return result
 
 
@@ -140,8 +153,6 @@ async def debug_pair(symbol: str, mode: str = Query("scalping")):
 async def execute_from_web(signal_id: int, body: dict = {}):
     """Execute un signal en paper trading depuis le dashboard."""
     from app.database import get_signal_by_id, update_signal_status, get_paper_portfolio
-    from app.core.paper_trader import paper_trader
-    from app.core.position_monitor import position_monitor
     import json as _json
 
     margin_usdt = body.get("margin", 10)
@@ -159,13 +170,18 @@ async def execute_from_web(signal_id: int, body: dict = {}):
         "reasons": _json.loads(signal_db.get("reasons", "[]")) if isinstance(signal_db.get("reasons"), str) else signal_db.get("reasons", []),
     }
 
-    # Verifier le solde paper
-    portfolio = await get_paper_portfolio()
+    # Determiner le bot version du signal
+    bv = signal_db.get("bot_version", "V2")
+    bots = _get_bot_instances()
+    bot = bots.get(bv, bots["V2"])
+    paper_trader = bot["paper_trader"]
+    position_monitor = bot["position_monitor"]
+
+    portfolio = await get_paper_portfolio(bv)
     available = portfolio["current_balance"] - portfolio["reserved_margin"]
     if margin_usdt > available:
         return {"success": False, "error": f"Solde insuffisant ({available:.2f}$ dispo)"}
 
-    # Executer en paper trading
     lev = signal_data.get("leverage", 10)
     entry_price = signal_data["entry_price"]
     if not entry_price or entry_price <= 0:
@@ -186,14 +202,13 @@ async def execute_from_web(signal_id: int, body: dict = {}):
         "balance": round(available - margin_usdt, 2),
     }
 
-    # Enregistrer dans le position monitor pour suivi temps reel
+    signal_data["bot_version"] = bv
     pos_id = await position_monitor.register_trade(signal_data, fake_result)
     if pos_id is None:
         return {"success": False, "error": "Position deja active sur ce symbol"}
 
-    # Reserver la marge paper
     from app.database import reserve_paper_margin
-    await reserve_paper_margin(margin_usdt)
+    await reserve_paper_margin(margin_usdt, bv)
     paper_trader._open_positions[pos_id] = margin_usdt
 
     await update_signal_status(signal_id, "executed")
@@ -212,7 +227,6 @@ async def execute_from_web(signal_id: int, body: dict = {}):
 
 @router.get("/learning")
 async def get_learning_stats():
-    """Stats d'apprentissage par setup/symbol/mode."""
     from app.core.trade_learner import trade_learner
     stats = await trade_learner.get_all_stats()
     return {"stats": stats, "count": len(stats)}
@@ -220,22 +234,21 @@ async def get_learning_stats():
 
 @router.get("/sentiment")
 async def get_sentiment():
-    """Retourne le sentiment actuel du marche."""
     from app.services.sentiment import sentiment_analyzer
     sentiment = await sentiment_analyzer.get_sentiment()
     return sentiment
 
 
 @router.get("/positions")
-async def list_positions():
-    positions = await get_active_positions()
+async def list_positions(bot_version: str = Query(None)):
+    positions = await get_active_positions(bot_version=bot_version)
     return {"positions": positions, "count": len(positions)}
 
 
 @router.get("/positions/live")
-async def live_positions():
+async def live_positions(bot_version: str = Query(None)):
     """Positions actives avec prix en temps reel et P&L."""
-    positions = await get_active_positions()
+    positions = await get_active_positions(bot_version=bot_version)
     if not positions:
         return {"positions": [], "count": 0}
 
@@ -253,7 +266,6 @@ async def live_positions():
         remaining_qty = pos["remaining_quantity"]
         original_qty = pos["original_quantity"]
 
-        # P&L realise (TP deja touches)
         realized_pnl = 0.0
         if pos.get("tp1_hit"):
             tp1_qty = original_qty * (pos.get("tp1_close_pct", 40) / 100)
@@ -264,7 +276,6 @@ async def live_positions():
             diff = (pos["tp2"] - entry) if direction == "long" else (entry - pos["tp2"])
             realized_pnl += diff * tp2_qty
 
-        # P&L non realise (position restante)
         if current_price > 0:
             diff = (current_price - entry) if direction == "long" else (entry - current_price)
             unrealized_pnl = diff * remaining_qty
@@ -287,38 +298,46 @@ async def live_positions():
 
 
 @router.get("/paper/portfolio")
-async def paper_portfolio():
-    """Retourne le portefeuille paper trading."""
+async def paper_portfolio(bot_version: str = Query("V2")):
     from app.database import get_paper_portfolio
-    portfolio = await get_paper_portfolio()
+    portfolio = await get_paper_portfolio(bot_version)
     return portfolio
 
 
 @router.post("/paper/reset")
-async def paper_reset():
-    """Remet le portefeuille paper a zero (100$)."""
+async def paper_reset(bot_version: str = Query(None)):
     from app.database import reset_paper_portfolio
-    from app.core.paper_trader import paper_trader
-    await reset_paper_portfolio(100.0)
-    paper_trader._open_positions.clear()
-    return {"status": "ok", "message": "Portfolio reset a 100$"}
+    bots = _get_bot_instances()
+    if bot_version:
+        await reset_paper_portfolio(100.0, bot_version)
+        bot = bots.get(bot_version)
+        if bot:
+            bot["paper_trader"]._open_positions.clear()
+        return {"status": "ok", "message": f"Portfolio {bot_version} reset a 100$"}
+    else:
+        await reset_paper_portfolio(100.0)
+        for b in bots.values():
+            b["paper_trader"]._open_positions.clear()
+        return {"status": "ok", "message": "Portfolios V1+V2 reset a 100$"}
 
 
 @router.post("/positions/{position_id}/close")
 async def close_position_manual(position_id: int, body: dict = {}):
     """Ferme manuellement une position au prix actuel."""
     from app.database import get_active_positions, close_position, insert_trade, update_paper_balance
-    from app.core.paper_trader import paper_trader
-    from app.core.position_monitor import position_monitor
     from datetime import datetime
 
-    # Trouver la position
     positions = await get_active_positions()
     pos = next((p for p in positions if p["id"] == position_id), None)
     if not pos:
         return {"success": False, "error": "Position introuvable ou deja fermee"}
 
-    # Utiliser le prix envoye par le frontend (WS live) sinon fetcher
+    bv = pos.get("bot_version", "V2")
+    bots = _get_bot_instances()
+    bot = bots.get(bv, bots["V2"])
+    paper_trader = bot["paper_trader"]
+    position_monitor = bot["position_monitor"]
+
     current_price = body.get("price", 0)
     if not current_price or current_price <= 0:
         try:
@@ -330,7 +349,6 @@ async def close_position_manual(position_id: int, body: dict = {}):
     if current_price <= 0:
         return {"success": False, "error": "Impossible de recuperer le prix actuel"}
 
-    # Calculer le P&L
     entry = pos["entry_price"]
     direction = pos["direction"]
     original_qty = pos["original_quantity"]
@@ -350,7 +368,6 @@ async def close_position_manual(position_id: int, body: dict = {}):
     unrealized_pnl = diff * remaining_qty
     total_pnl = realized_pnl + unrealized_pnl
 
-    # Fermer la position dans la DB
     now = datetime.utcnow().isoformat()
     pnl_pct = (total_pnl / pos.get("margin_required", 1)) * 100 if pos.get("margin_required") else 0
     result = "win" if total_pnl > 0 else "loss"
@@ -361,7 +378,6 @@ async def close_position_manual(position_id: int, body: dict = {}):
         "pnl_usd": round(total_pnl, 4),
     })
 
-    # Journaliser le trade
     entry_time = pos.get("entry_time") or pos.get("created_at")
     duration = 0
     if entry_time:
@@ -390,14 +406,13 @@ async def close_position_manual(position_id: int, body: dict = {}):
         "exit_time": now,
         "duration_seconds": duration,
         "notes": f"manual_close tp1={pos.get('tp1_hit',0)} tp2={pos.get('tp2_hit',0)}",
+        "bot_version": bv,
     })
 
-    # Mettre a jour le paper portfolio
     margin = paper_trader._open_positions.pop(position_id, pos.get("margin_required", 0))
     if margin:
-        await update_paper_balance(total_pnl, total_pnl > 0, margin)
+        await update_paper_balance(total_pnl, total_pnl > 0, margin, bv)
 
-    # Retirer du cache du position_monitor
     position_monitor._positions.pop(position_id, None)
 
     return {
@@ -411,7 +426,6 @@ async def close_position_manual(position_id: int, body: dict = {}):
 
 @router.post("/test-signal")
 async def send_test_signal():
-    """Lance une vraie analyse et envoie le resultat comme signal."""
     from app.database import insert_signal
     from app.services.telegram_bot import send_signal
     from app.core.signal_engine import analyze_pair
@@ -426,7 +440,6 @@ async def send_test_signal():
     result = await analyze_pair(symbol, data, mode)
 
     if result["type"] != "signal":
-        # Pas de signal valide, forcer un signal avec le prix actuel
         ticker = await market_data.fetch_ticker(symbol)
         price = ticker.get("price", 0)
         if price <= 0:
@@ -461,7 +474,6 @@ async def send_test_signal():
             "reasons": result.get("details", ["Signal test"]),
         }
 
-    # Verifier que le signal a des prix valides
     if not result.get("entry_price") or result["entry_price"] <= 0:
         return {"status": "error", "message": "Analyse n'a pas produit de prix valide"}
 
@@ -478,7 +490,6 @@ async def send_test_signal():
 
 @router.get("/freqtrade/openTrades")
 async def ft_open_trades():
-    """Trades ouverts sur Freqtrade."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{FT_URL}/api/v1/status", auth=FT_AUTH)
@@ -512,7 +523,6 @@ async def ft_open_trades():
 
 @router.get("/freqtrade/trades")
 async def ft_closed_trades(limit: int = Query(50, ge=1, le=200)):
-    """Historique des trades fermes Freqtrade."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{FT_URL}/api/v1/trades", params={"limit": limit}, auth=FT_AUTH)
@@ -542,7 +552,6 @@ async def ft_closed_trades(limit: int = Query(50, ge=1, le=200)):
 
 @router.get("/freqtrade/stats")
 async def ft_stats():
-    """Stats globales Freqtrade (profit + balance)."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r_profit = await client.get(f"{FT_URL}/api/v1/profit", auth=FT_AUTH)

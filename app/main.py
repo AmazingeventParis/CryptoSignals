@@ -1,5 +1,5 @@
 """
-Point d'entree principal : FastAPI + Scanner + Dashboard.
+Point d'entree principal : FastAPI + Scanner V1/V2 + Dashboard.
 """
 import asyncio
 import json
@@ -15,7 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import websockets
 
-from app.config import SETTINGS, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID
+from app.config import SETTINGS, SETTINGS_V1, SETTINGS_V2, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID
 
 # Auth config
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
@@ -24,9 +24,9 @@ SESSION_MAX_AGE = 30 * 24 * 3600  # 30 jours
 _serializer = URLSafeTimedSerializer(SESSION_SECRET)
 from app.database import init_db, get_signal_by_id, update_signal_status
 from app.core.market_data import market_data
-from app.core.scanner import scanner
-from app.core.position_monitor import position_monitor
-from app.core.paper_trader import paper_trader
+from app.core.scanner import Scanner
+from app.core.position_monitor import PositionMonitor
+from app.core.paper_trader import PaperTrader
 from app.core.order_executor import execute_signal
 from app.api.routes import router
 from app.services.telegram_bot import (
@@ -41,57 +41,76 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# --- Instanciation des 2 bots ---
+scanner_v1 = Scanner("V1", SETTINGS_V1)
+scanner_v2 = Scanner("V2", SETTINGS_V2)
+paper_trader_v1 = PaperTrader("V1", SETTINGS_V1)
+paper_trader_v2 = PaperTrader("V2", SETTINGS_V2)
+position_monitor_v1 = PositionMonitor("V1", SETTINGS_V1)
+position_monitor_v2 = PositionMonitor("V2", SETTINGS_V2)
+
+# Connecter les composants entre eux
+paper_trader_v1.set_position_monitor(position_monitor_v1)
+paper_trader_v2.set_position_monitor(position_monitor_v2)
+scanner_v1.set_paper_trader(paper_trader_v1)
+scanner_v2.set_paper_trader(paper_trader_v2)
+scanner_v1.set_position_monitor(position_monitor_v1)
+scanner_v2.set_position_monitor(position_monitor_v2)
+
+# Export pour routes.py
+bot_instances = {
+    "V1": {"scanner": scanner_v1, "paper_trader": paper_trader_v1, "position_monitor": position_monitor_v1},
+    "V2": {"scanner": scanner_v2, "paper_trader": paper_trader_v2, "position_monitor": position_monitor_v2},
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Demarrage Crypto Signals Bot...")
+    logger.info("Demarrage Crypto Signals Bot (V1 + V2)...")
     await init_db()
 
-    # Connexion MEXC non bloquante
+    # Connexion MEXC (partagee)
     await market_data.connect()
     if market_data.is_connected():
-        logger.info("MEXC connecte - scanner demarre")
+        logger.info("MEXC connecte - scanners demarrent")
     else:
         logger.warning("MEXC non connecte - dashboard seul, le scanner retentera la connexion")
 
-    # Telegram disabled
-    # try:
-    #     await send_startup_message()
-    # except Exception as e:
-    #     logger.warning(f"Telegram startup message echoue: {e}")
-    # try:
-    #     await register_webhook("https://crypto.swipego.app/telegram/webhook")
-    # except Exception as e:
-    #     logger.warning(f"Telegram webhook registration echoue: {e}")
+    # Demarrer les paper traders (portefeuilles fictifs)
+    await paper_trader_v1.start()
+    await paper_trader_v2.start()
+    logger.info("Paper Traders V1+V2 demarres")
 
-    # Demarrer le paper trader (portefeuille fictif)
-    await paper_trader.start()
-    logger.info("Paper Trader demarre (portefeuille fictif)")
+    # Lancer les scanners
+    scanner_v1_task = asyncio.create_task(scanner_v1.start())
+    scanner_v2_task = asyncio.create_task(scanner_v2.start())
+    logger.info("Scanners V1+V2 lances en arriere-plan")
 
-    # Lancer le scanner en background
-    scanner_task = asyncio.create_task(scanner.start())
-    logger.info("Scanner lance en arriere-plan")
-
-    # Lancer le position monitor (trailing stop)
-    monitor_task = asyncio.create_task(position_monitor.start())
-    logger.info("Position Monitor lance en arriere-plan")
+    # Lancer les position monitors
+    monitor_v1_task = asyncio.create_task(position_monitor_v1.start())
+    monitor_v2_task = asyncio.create_task(position_monitor_v2.start())
+    logger.info("Position Monitors V1+V2 lances en arriere-plan")
 
     yield
 
     # Shutdown
     logger.info("Arret du bot...")
-    await scanner.stop()
-    scanner_task.cancel()
-    await position_monitor.stop()
-    monitor_task.cancel()
+    await scanner_v1.stop()
+    await scanner_v2.stop()
+    scanner_v1_task.cancel()
+    scanner_v2_task.cancel()
+    await position_monitor_v1.stop()
+    await position_monitor_v2.stop()
+    monitor_v1_task.cancel()
+    monitor_v2_task.cancel()
     await market_data.close()
 
 
 app = FastAPI(
     title="Crypto Signals MEXC",
-    description="Bot de signaux trading crypto pour MEXC Futures",
-    version="1.0.0",
+    description="Bot de signaux trading crypto pour MEXC Futures (V1 + V2)",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -107,7 +126,6 @@ def _check_session(request: Request) -> bool:
         return False
 
 
-# Routes exemptees d'auth
 _PUBLIC_PATHS = {"/login", "/api/login", "/health", "/telegram/webhook"}
 _PUBLIC_PREFIXES = ("/static/login.html",)
 
@@ -116,26 +134,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         path = request.url.path
 
-        # Routes publiques
         if path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PREFIXES):
             return await call_next(request)
 
-        # Si pas de mot de passe configure, tout passer (dev local)
         if not DASHBOARD_PASSWORD:
             return await call_next(request)
 
-        # Verifier session
         if _check_session(request):
             return await call_next(request)
 
-        # Non authentifie
         if path.startswith("/api/") or path.startswith("/ws/"):
             return JSONResponse({"error": "Non authentifie"}, status_code=401)
 
         return RedirectResponse("/login", status_code=302)
 
 
-# No-cache pour fichiers statiques
 class NoCacheMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -146,10 +159,8 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
 app.add_middleware(NoCacheMiddleware)
 app.add_middleware(AuthMiddleware)
 
-# API routes
 app.include_router(router)
 
-# Dashboard static files
 static_dir = BASE_DIR / "app" / "static"
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
@@ -191,11 +202,14 @@ async def dashboard():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "scanner_running": scanner.running}
+    return {
+        "status": "ok",
+        "scanner_v1_running": scanner_v1.running,
+        "scanner_v2_running": scanner_v2.running,
+    }
 
 
 # --- Telegram Webhook ---
-# pending : pour LIMIT (attend montant libre)
 pending_executions: dict = {}
 
 
@@ -216,7 +230,6 @@ async def telegram_webhook(request: Request):
     except Exception:
         return {"ok": True}
 
-    # --- Callback de bouton ---
     callback = update.get("callback_query")
     if callback:
         callback_id = callback.get("id")
@@ -227,7 +240,6 @@ async def telegram_webhook(request: Request):
         if str(chat_id) != str(TELEGRAM_CHAT_ID):
             return {"ok": True}
 
-        # === GO : 1 clic = montant + MARKET direct ===
         if data.startswith("go_"):
             parts = data.split("_")
             margin_usdt = float(parts[1])
@@ -236,7 +248,6 @@ async def telegram_webhook(request: Request):
             await edit_message_reply_markup(chat_id, message_id)
             await _do_execute(str(chat_id), signal_id, "market", margin_usdt=margin_usdt)
 
-        # === LIMIT : demande montant puis place ordre limit ===
         elif data.startswith("lmt_"):
             signal_id = int(data.split("_")[1])
             signal = await get_signal_by_id(signal_id)
@@ -277,7 +288,6 @@ async def telegram_webhook(request: Request):
                 },
             )
 
-        # === CUSTOM : montant libre MARKET ===
         elif data.startswith("cust_"):
             signal_id = int(data.split("_")[1])
             signal = await get_signal_by_id(signal_id)
@@ -298,7 +308,6 @@ async def telegram_webhook(request: Request):
                 "\U0001f4b2 <b>Montant MARKET ?</b>\nTape le montant en $ (ex: 15)"
             )
 
-        # === LIMIT GO : montant choisi -> place ordre limit ===
         elif data.startswith("lgo_"):
             parts = data.split("_")
             margin_usdt = float(parts[1])
@@ -322,7 +331,6 @@ async def telegram_webhook(request: Request):
 
         return {"ok": True}
 
-    # --- Message texte : montant libre ---
     message = update.get("message")
     if message:
         chat_id = str(message.get("chat", {}).get("id"))
@@ -338,7 +346,6 @@ async def telegram_webhook(request: Request):
                 margin_usdt = float(match.group(1))
                 pending = pending_executions.pop(chat_id, None)
                 if pending:
-                    # En attente (LIMIT ou MARKET texte libre)
                     signal_id = pending["signal_id"]
                     order_type = "limit" if pending.get("step") == "limit_amount" else "market"
                     await _do_execute(chat_id, signal_id, order_type, margin_usdt=margin_usdt)
@@ -349,10 +356,8 @@ async def telegram_webhook(request: Request):
 async def _do_execute(
     chat_id: str, signal_id: int, order_type: str, margin_usdt: float = 10,
 ):
-    """Execute l'ordre (market ou limit) avec le montant choisi."""
     from app.services.telegram_bot import send_message, send_execution_result
 
-    # Recuperer le signal
     signal_db = await get_signal_by_id(signal_id)
     if not signal_db:
         await send_message("\u274c Signal introuvable")
@@ -372,7 +377,6 @@ async def _do_execute(
     is_test = signal_db.get("status") == "test"
 
     if is_test:
-        # SIMULATION
         position_usd = margin_usdt * lev
         fake_result = {
             "success": True,
@@ -390,7 +394,6 @@ async def _do_execute(
         await send_message("\U0001f9ea <b>SIMULATION</b> - Aucun ordre place")
         return
 
-    # EXECUTION REELLE
     result = await execute_signal(signal_data, margin_usdt=margin_usdt, order_type=order_type)
 
     new_status = "executed" if result["success"] else "error"
@@ -408,13 +411,11 @@ TF_MAP = {'1m': 'Min1', '3m': 'Min3', '5m': 'Min5', '15m': 'Min15', '1h': 'Min60
 async def kline_ws(websocket: WebSocket, symbol: str, timeframe: str):
     await websocket.accept()
     mexc_tf = TF_MAP.get(timeframe, 'Min5')
-    # "XRP-USDT:USDT" -> "XRP_USDT"
     mexc_symbol = symbol.split(':')[0].replace('-', '_').replace('/', '_')
 
     logger.info(f"WS client connecte: {mexc_symbol} {mexc_tf}")
     try:
         async with websockets.connect('wss://contract.mexc.com/edge') as mexc_ws:
-            # Subscribe kline
             await mexc_ws.send(json.dumps({
                 'method': 'sub.kline',
                 'param': {'symbol': mexc_symbol, 'interval': mexc_tf}
@@ -432,7 +433,6 @@ async def kline_ws(websocket: WebSocket, symbol: str, timeframe: str):
                     await mexc_ws.send('{"method":"ping"}')
 
             async def listen_client():
-                # Detecter deconnexion client
                 async for _ in websocket.iter_text():
                     pass
 
@@ -450,30 +450,29 @@ async def kline_ws(websocket: WebSocket, symbol: str, timeframe: str):
 
 @app.websocket("/ws/positions")
 async def positions_ws(websocket: WebSocket):
-    """WebSocket temps reel : stream les prix et P&L des positions actives."""
+    """WebSocket temps reel : stream les prix et P&L des positions actives (V1+V2)."""
     await websocket.accept()
     logger.info("WS positions client connecte")
 
     try:
         while True:
-            # Recuperer les positions actives depuis le cache du monitor
-            positions = list(position_monitor._positions.values())
-            active = [p for p in positions if p.get("state") != "closed"]
+            # Combiner positions V1 et V2
+            positions_v1 = list(position_monitor_v1._positions.values())
+            positions_v2 = list(position_monitor_v2._positions.values())
+            all_positions = positions_v1 + positions_v2
+            active = [p for p in all_positions if p.get("state") != "closed"]
 
             if not active:
                 await websocket.send_json({"positions": []})
                 await asyncio.sleep(2)
                 continue
 
-            # Collecter les symbols uniques
             symbols = list(set(p["symbol"] for p in active))
             mexc_symbols = {}
             for s in symbols:
                 mexc_symbols[s] = s.split(":")[0].replace("-", "_").replace("/", "_")
 
-            # Connecter au WS MEXC pour tous les symbols
             async with websockets.connect("wss://contract.mexc.com/edge") as mexc_ws:
-                # S'abonner aux deals de chaque symbol
                 for s, ms in mexc_symbols.items():
                     await mexc_ws.send(json.dumps({
                         "method": "sub.deal",
@@ -486,7 +485,6 @@ async def positions_ws(websocket: WebSocket):
 
                 try:
                     async for raw in mexc_ws:
-                        # Verifier deconnexion client
                         if listen_task.done():
                             break
 
@@ -497,13 +495,11 @@ async def positions_ws(websocket: WebSocket):
                             price = float(last_deal.get("p", 0))
                             sym_key = msg.get("symbol", "")
                             if price > 0:
-                                # Trouver le symbol original
                                 for s, ms in mexc_symbols.items():
                                     if ms == sym_key:
                                         prices[s] = price
                                         break
 
-                                # Calculer P&L et envoyer
                                 result = []
                                 for p in active:
                                     cur = prices.get(p["symbol"], 0)
@@ -515,11 +511,13 @@ async def positions_ws(websocket: WebSocket):
                                 if result:
                                     await websocket.send_json({"positions": result})
 
-                        # Re-checker les positions actives periodiquement
-                        new_active = [p for p in position_monitor._positions.values() if p.get("state") != "closed"]
+                        # Re-checker les positions actives
+                        new_v1 = list(position_monitor_v1._positions.values())
+                        new_v2 = list(position_monitor_v2._positions.values())
+                        new_active = [p for p in new_v1 + new_v2 if p.get("state") != "closed"]
                         new_symbols = set(p["symbol"] for p in new_active)
                         if new_symbols != set(symbols):
-                            break  # Reconnexion pour gerer les nouvelles paires
+                            break
 
                 finally:
                     ping_task.cancel()
@@ -551,7 +549,6 @@ def _calc_live_pnl(pos: dict, current_price: float) -> dict:
     direction = pos["direction"]
     original_qty = pos["original_quantity"]
     remaining_qty = pos["remaining_quantity"]
-    dec = 2 if entry >= 100 else 4 if entry >= 1 else 6
 
     realized = 0.0
     if pos.get("tp1_hit"):
@@ -594,4 +591,5 @@ def _calc_live_pnl(pos: dict, current_price: float) -> dict:
         "total_pnl": round(total, 4),
         "pnl_pct": round(pnl_pct, 2),
         "progress": round(progress, 1),
+        "bot_version": pos.get("bot_version", "V2"),
     }

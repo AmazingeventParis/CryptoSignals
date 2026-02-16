@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS signals (
     leverage INTEGER,
     reasons TEXT,
     status TEXT DEFAULT 'active',
+    bot_version TEXT DEFAULT 'V2',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS trades_journal (
     exit_time TEXT,
     duration_seconds INTEGER,
     notes TEXT,
+    bot_version TEXT DEFAULT 'V2',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -54,6 +56,7 @@ CREATE TABLE IF NOT EXISTS tradeability_log (
     score REAL NOT NULL,
     is_tradable INTEGER NOT NULL,
     details TEXT,
+    bot_version TEXT DEFAULT 'V2',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -82,6 +85,7 @@ CREATE TABLE IF NOT EXISTS paper_portfolio (
     total_pnl REAL DEFAULT 0.0,
     best_trade_pnl REAL DEFAULT 0.0,
     worst_trade_pnl REAL DEFAULT 0.0,
+    bot_version TEXT DEFAULT 'V2',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -128,6 +132,7 @@ CREATE TABLE IF NOT EXISTS active_positions (
     tp3_hit INTEGER DEFAULT 0,
     sl_hit INTEGER DEFAULT 0,
     mode TEXT,
+    bot_version TEXT DEFAULT 'V2',
     entry_time TEXT DEFAULT CURRENT_TIMESTAMP,
     closed_at TEXT,
     close_reason TEXT,
@@ -136,11 +141,28 @@ CREATE TABLE IF NOT EXISTS active_positions (
 );
 """
 
+# Migration: ajouter bot_version aux tables existantes
+MIGRATION_ADD_BOT_VERSION = [
+    "ALTER TABLE signals ADD COLUMN bot_version TEXT DEFAULT 'V2'",
+    "ALTER TABLE trades_journal ADD COLUMN bot_version TEXT DEFAULT 'V2'",
+    "ALTER TABLE tradeability_log ADD COLUMN bot_version TEXT DEFAULT 'V2'",
+    "ALTER TABLE active_positions ADD COLUMN bot_version TEXT DEFAULT 'V2'",
+    "ALTER TABLE paper_portfolio ADD COLUMN bot_version TEXT DEFAULT 'V2'",
+]
+
 
 async def init_db():
     async with aiosqlite.connect(str(DB_PATH)) as db:
         await db.executescript(SCHEMA)
         await db.commit()
+
+        # Migration: ajouter bot_version si manquante
+        for stmt in MIGRATION_ADD_BOT_VERSION:
+            try:
+                await db.execute(stmt)
+                await db.commit()
+            except Exception:
+                pass  # Colonne existe deja
 
 
 async def insert_signal(signal: dict) -> int:
@@ -148,8 +170,8 @@ async def insert_signal(signal: dict) -> int:
         cursor = await db.execute(
             """INSERT INTO signals
             (timestamp, symbol, mode, direction, score, entry_price,
-             stop_loss, tp1, tp2, tp3, setup_type, leverage, reasons, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             stop_loss, tp1, tp2, tp3, setup_type, leverage, reasons, status, bot_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 datetime.utcnow().isoformat(),
                 signal["symbol"],
@@ -165,6 +187,7 @@ async def insert_signal(signal: dict) -> int:
                 signal.get("leverage"),
                 json.dumps(signal.get("reasons", []), ensure_ascii=False),
                 "active",
+                signal.get("bot_version", "V2"),
             ),
         )
         await db.commit()
@@ -178,8 +201,8 @@ async def insert_trade(trade: dict):
             (signal_id, symbol, mode, direction, entry_price, exit_price,
              stop_loss, tp1, tp2, tp3, leverage, position_size_usd,
              pnl_usd, pnl_pct, result, entry_time, exit_time,
-             duration_seconds, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             duration_seconds, notes, bot_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 trade.get("signal_id"),
                 trade["symbol"],
@@ -200,22 +223,24 @@ async def insert_trade(trade: dict):
                 trade.get("exit_time"),
                 trade.get("duration_seconds"),
                 trade.get("notes"),
+                trade.get("bot_version", "V2"),
             ),
         )
         await db.commit()
 
 
-async def log_tradeability(symbol: str, score: float, is_tradable: bool, details: dict):
+async def log_tradeability(symbol: str, score: float, is_tradable: bool, details: dict, bot_version: str = "V2"):
     async with aiosqlite.connect(str(DB_PATH)) as db:
         await db.execute(
-            """INSERT INTO tradeability_log (timestamp, symbol, score, is_tradable, details)
-            VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO tradeability_log (timestamp, symbol, score, is_tradable, details, bot_version)
+            VALUES (?, ?, ?, ?, ?, ?)""",
             (
                 datetime.utcnow().isoformat(),
                 symbol,
                 score,
                 1 if is_tradable else 0,
                 json.dumps(details, ensure_ascii=False),
+                bot_version,
             ),
         )
         await db.commit()
@@ -247,7 +272,7 @@ async def get_latest_active_signal() -> dict | None:
         return dict(row) if row else None
 
 
-async def get_signals(limit: int = 50, symbol: str = None, mode: str = None) -> list[dict]:
+async def get_signals(limit: int = 50, symbol: str = None, mode: str = None, bot_version: str = None) -> list[dict]:
     async with aiosqlite.connect(str(DB_PATH)) as db:
         db.row_factory = aiosqlite.Row
         query = "SELECT * FROM signals WHERE 1=1"
@@ -258,6 +283,9 @@ async def get_signals(limit: int = 50, symbol: str = None, mode: str = None) -> 
         if mode:
             query += " AND mode = ?"
             params.append(mode)
+        if bot_version:
+            query += " AND bot_version = ?"
+            params.append(bot_version)
         query += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         cursor = await db.execute(query, params)
@@ -265,28 +293,38 @@ async def get_signals(limit: int = 50, symbol: str = None, mode: str = None) -> 
         return [dict(r) for r in rows]
 
 
-async def get_trades(limit: int = 50) -> list[dict]:
+async def get_trades(limit: int = 50, bot_version: str = None) -> list[dict]:
     async with aiosqlite.connect(str(DB_PATH)) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT * FROM trades_journal ORDER BY id DESC LIMIT ?", (limit,)
-        )
+        query = "SELECT * FROM trades_journal WHERE 1=1"
+        params = []
+        if bot_version:
+            query += " AND bot_version = ?"
+            params.append(bot_version)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
 
-async def get_stats() -> dict:
+async def get_stats(bot_version: str = None) -> dict:
     async with aiosqlite.connect(str(DB_PATH)) as db:
         db.row_factory = aiosqlite.Row
-        total = await (await db.execute("SELECT COUNT(*) as c FROM trades_journal")).fetchone()
+        where = ""
+        params = []
+        if bot_version:
+            where = " WHERE bot_version = ?"
+            params = [bot_version]
+        total = await (await db.execute(f"SELECT COUNT(*) as c FROM trades_journal{where}", params)).fetchone()
         wins = await (
-            await db.execute("SELECT COUNT(*) as c FROM trades_journal WHERE result = 'win'")
+            await db.execute(f"SELECT COUNT(*) as c FROM trades_journal{' WHERE' if not where else where + ' AND'} result = 'win'" if not where else f"SELECT COUNT(*) as c FROM trades_journal{where} AND result = 'win'", params)
         ).fetchone()
         losses = await (
-            await db.execute("SELECT COUNT(*) as c FROM trades_journal WHERE result = 'loss'")
+            await db.execute(f"SELECT COUNT(*) as c FROM trades_journal{where}{' AND' if where else ' WHERE'} result = 'loss'", params)
         ).fetchone()
         pnl = await (
-            await db.execute("SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades_journal")
+            await db.execute(f"SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades_journal{where}", params)
         ).fetchone()
         return {
             "total_trades": total["c"],
@@ -308,8 +346,8 @@ async def insert_active_position(pos: dict) -> int:
              tp1_close_pct, tp2_close_pct, tp3_close_pct,
              leverage, position_size_usd, margin_required,
              sl_order_id, tp1_order_id, tp2_order_id, tp3_order_id,
-             entry_order_id, mode)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             entry_order_id, mode, bot_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 pos.get("signal_id"),
                 pos["symbol"], pos["direction"], pos["entry_price"], pos["stop_loss"],
@@ -321,18 +359,23 @@ async def insert_active_position(pos: dict) -> int:
                 pos.get("sl_order_id"), pos.get("tp1_order_id"),
                 pos.get("tp2_order_id"), pos.get("tp3_order_id"),
                 pos.get("entry_order_id"), pos.get("mode"),
+                pos.get("bot_version", "V2"),
             ),
         )
         await db.commit()
         return cursor.lastrowid
 
 
-async def get_active_positions() -> list[dict]:
+async def get_active_positions(bot_version: str = None) -> list[dict]:
     async with aiosqlite.connect(str(DB_PATH)) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT * FROM active_positions WHERE state != 'closed' ORDER BY id"
-        )
+        query = "SELECT * FROM active_positions WHERE state != 'closed'"
+        params = []
+        if bot_version:
+            query += " AND bot_version = ?"
+            params.append(bot_version)
+        query += " ORDER BY id"
+        cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
@@ -357,22 +400,27 @@ async def close_position(position_id: int, updates: dict):
 
 # --- Paper Portfolio ---
 
-async def init_paper_portfolio(initial_balance: float = 100.0):
+async def init_paper_portfolio(initial_balance: float = 100.0, bot_version: str = "V2"):
     async with aiosqlite.connect(str(DB_PATH)) as db:
-        cursor = await db.execute("SELECT COUNT(*) as c FROM paper_portfolio")
+        cursor = await db.execute(
+            "SELECT COUNT(*) as c FROM paper_portfolio WHERE bot_version = ?", (bot_version,)
+        )
         row = await cursor.fetchone()
         if row[0] == 0:
             await db.execute(
-                "INSERT INTO paper_portfolio (initial_balance, current_balance) VALUES (?, ?)",
-                (initial_balance, initial_balance),
+                "INSERT INTO paper_portfolio (initial_balance, current_balance, bot_version) VALUES (?, ?, ?)",
+                (initial_balance, initial_balance, bot_version),
             )
             await db.commit()
 
 
-async def get_paper_portfolio() -> dict:
+async def get_paper_portfolio(bot_version: str = "V2") -> dict:
     async with aiosqlite.connect(str(DB_PATH)) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM paper_portfolio ORDER BY id LIMIT 1")
+        cursor = await db.execute(
+            "SELECT * FROM paper_portfolio WHERE bot_version = ? ORDER BY id LIMIT 1",
+            (bot_version,),
+        )
         row = await cursor.fetchone()
         if not row:
             return {
@@ -380,31 +428,31 @@ async def get_paper_portfolio() -> dict:
                 "reserved_margin": 0.0, "total_trades": 0,
                 "wins": 0, "losses": 0, "total_pnl": 0.0,
                 "best_trade_pnl": 0.0, "worst_trade_pnl": 0.0,
+                "bot_version": bot_version,
             }
         return dict(row)
 
 
-async def reserve_paper_margin(amount: float):
+async def reserve_paper_margin(amount: float, bot_version: str = "V2"):
     async with aiosqlite.connect(str(DB_PATH)) as db:
         await db.execute(
-            "UPDATE paper_portfolio SET reserved_margin = reserved_margin + ? WHERE id = 1",
-            (amount,),
+            "UPDATE paper_portfolio SET reserved_margin = reserved_margin + ? WHERE bot_version = ?",
+            (amount, bot_version),
         )
         await db.commit()
 
 
-async def release_paper_margin(amount: float):
+async def release_paper_margin(amount: float, bot_version: str = "V2"):
     async with aiosqlite.connect(str(DB_PATH)) as db:
         await db.execute(
-            "UPDATE paper_portfolio SET reserved_margin = MAX(0, reserved_margin - ?) WHERE id = 1",
-            (amount,),
+            "UPDATE paper_portfolio SET reserved_margin = MAX(0, reserved_margin - ?) WHERE bot_version = ?",
+            (amount, bot_version),
         )
         await db.commit()
 
 
-async def update_paper_balance(pnl: float, is_win: bool, margin: float):
+async def update_paper_balance(pnl: float, is_win: bool, margin: float, bot_version: str = "V2"):
     async with aiosqlite.connect(str(DB_PATH)) as db:
-        # Liberer la marge et ajouter le P&L
         await db.execute(
             """UPDATE paper_portfolio SET
                 current_balance = current_balance + ?,
@@ -415,8 +463,8 @@ async def update_paper_balance(pnl: float, is_win: bool, margin: float):
                 total_pnl = total_pnl + ?,
                 best_trade_pnl = MAX(best_trade_pnl, ?),
                 worst_trade_pnl = MIN(worst_trade_pnl, ?)
-            WHERE id = 1""",
-            (pnl, margin, 1 if is_win else 0, 0 if is_win else 1, pnl, pnl, pnl),
+            WHERE bot_version = ?""",
+            (pnl, margin, 1 if is_win else 0, 0 if is_win else 1, pnl, pnl, pnl, bot_version),
         )
         await db.commit()
 
@@ -473,14 +521,30 @@ async def get_all_setup_performance() -> list[dict]:
         return [dict(r) for r in rows]
 
 
-async def reset_paper_portfolio(initial_balance: float = 100.0):
+async def reset_paper_portfolio(initial_balance: float = 100.0, bot_version: str = None):
     async with aiosqlite.connect(str(DB_PATH)) as db:
-        await db.execute("DELETE FROM paper_portfolio")
-        await db.execute("DELETE FROM active_positions")
-        await db.execute("DELETE FROM trades_journal")
-        await db.execute("DELETE FROM signals")
-        await db.execute(
-            "INSERT INTO paper_portfolio (initial_balance, current_balance) VALUES (?, ?)",
-            (initial_balance, initial_balance),
-        )
+        if bot_version:
+            # Reset un seul bot
+            await db.execute("DELETE FROM active_positions WHERE bot_version = ?", (bot_version,))
+            await db.execute("DELETE FROM trades_journal WHERE bot_version = ?", (bot_version,))
+            await db.execute("DELETE FROM signals WHERE bot_version = ?", (bot_version,))
+            await db.execute("DELETE FROM paper_portfolio WHERE bot_version = ?", (bot_version,))
+            await db.execute(
+                "INSERT INTO paper_portfolio (initial_balance, current_balance, bot_version) VALUES (?, ?, ?)",
+                (initial_balance, initial_balance, bot_version),
+            )
+        else:
+            # Reset tout (retro-compat)
+            await db.execute("DELETE FROM paper_portfolio")
+            await db.execute("DELETE FROM active_positions")
+            await db.execute("DELETE FROM trades_journal")
+            await db.execute("DELETE FROM signals")
+            await db.execute(
+                "INSERT INTO paper_portfolio (initial_balance, current_balance, bot_version) VALUES (?, ?, ?)",
+                (initial_balance, initial_balance, "V1"),
+            )
+            await db.execute(
+                "INSERT INTO paper_portfolio (initial_balance, current_balance, bot_version) VALUES (?, ?, ?)",
+                (initial_balance, initial_balance, "V2"),
+            )
         await db.commit()

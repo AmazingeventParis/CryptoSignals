@@ -1,6 +1,7 @@
 """
 Signal Engine : combine les 4 couches (Tradeability + Direction + Entry + Sentiment)
 pour produire un signal final avec scoring 0-100.
+Accepte settings en parametre pour supporter V1 et V2.
 """
 import logging
 from app.config import SETTINGS, get_mode_config
@@ -13,22 +14,23 @@ from app.services.sentiment import sentiment_analyzer
 
 logger = logging.getLogger(__name__)
 
-SCORING = SETTINGS["scoring"]
 
-
-async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
+async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=None) -> dict:
     """
     Analyse complete d'une paire pour un mode donne.
     4 couches : Tradeability + Direction + Entry + Sentiment.
+    settings: config a utiliser (V1 ou V2). Si None, utilise SETTINGS global (V2).
     """
-    mode_cfg = get_mode_config(mode)
+    s = settings or SETTINGS
+    scoring = s["scoring"]
+
+    mode_cfg = get_mode_config(mode, s)
     if not mode_cfg:
         return _no_trade(symbol, mode, "Mode non configure")
 
     tf_analysis = mode_cfg["timeframes"]["analysis"]
     tf_filter = mode_cfg["timeframes"]["filter"]
 
-    # Verifier qu'on a les donnees
     ohlcv = market_data_dict.get("ohlcv", {})
     for tf in tf_analysis + [tf_filter]:
         if tf not in ohlcv or ohlcv[tf].empty:
@@ -41,7 +43,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     # COUCHE A : TRADEABILITY
     # =========================================
     df_analysis = ohlcv[tf_analysis[0]]
-    indicators_analysis = compute_all_indicators(df_analysis, SETTINGS["direction"])
+    indicators_analysis = compute_all_indicators(df_analysis, s["direction"])
 
     if not indicators_analysis:
         return _no_trade(symbol, mode, "Pas assez de donnees pour les indicateurs")
@@ -67,6 +69,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
         oi_change_pct=0,
         mode=mode,
         adx_val=adx_val,
+        settings=s,
     )
 
     if not tradeability["is_tradable"]:
@@ -84,7 +87,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     # COUCHE B : DIRECTION (timeframe superieur)
     # =========================================
     df_filter = ohlcv[tf_filter]
-    indicators_filter = compute_all_indicators(df_filter, SETTINGS["direction"])
+    indicators_filter = compute_all_indicators(df_filter, s["direction"])
 
     if not indicators_filter:
         return _no_trade(symbol, mode, "Indicateurs TF filtre insuffisants")
@@ -92,9 +95,16 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     direction = evaluate_direction(indicators_filter)
     direction_bias = direction["bias"]
 
-    # En swing, direction neutre = on continue mais avec score direction reduit
+    # Gestion direction neutre en swing
+    swing_neutral_allowed = s.get("swing_neutral_allowed", True)
     if mode == "swing" and direction_bias == "neutral":
-        direction["score"] = max(20, direction["score"] // 2)
+        if swing_neutral_allowed:
+            direction["score"] = max(20, direction["score"] // 2)
+        else:
+            return _no_trade(
+                symbol, mode, "Direction neutre - swing bloque",
+                direction["signals"], tradeability["score"]
+            )
 
     # =========================================
     # COUCHE C : ENTRY TRIGGER (timeframe analyse)
@@ -119,9 +129,8 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     # COUCHE D : SENTIMENT
     # =========================================
     sentiment = await sentiment_analyzer.get_sentiment()
-    sentiment_score = sentiment["score"]  # -100 a +100
+    sentiment_score = sentiment["score"]
 
-    # Le sentiment oriente la direction : boost ou penalise
     direction_score = direction["score"]
     sentiment_bias = sentiment["bias"]
 
@@ -155,14 +164,12 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     setup_score = entry["pattern_score"] + entry["vol_score"] + rr_score + entry.get("confluence_score", 0)
     setup_score = min(100, setup_score)
 
-    # Normaliser le sentiment de [-100, +100] vers [0, 100]
-    # Positif pour la direction du trade, negatif contre
     if entry["direction"] == "long":
-        sentiment_normalized = (sentiment_score + 100) / 2  # 0 a 100
+        sentiment_normalized = (sentiment_score + 100) / 2
     else:
-        sentiment_normalized = (-sentiment_score + 100) / 2  # Inverse pour short
+        sentiment_normalized = (-sentiment_score + 100) / 2
 
-    weights = SCORING["weights"]
+    weights = scoring["weights"]
     final_score = int(
         tradeability["score"] * 100 * weights.get("tradeability", 0.30)
         + direction_score * weights.get("direction", 0.25)
@@ -171,7 +178,6 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     )
     final_score = max(0, min(100, final_score))
 
-    # Filtrer par score minimum
     min_score = mode_cfg["entry"]["min_score"]
     if final_score < min_score:
         return _no_trade(
@@ -183,8 +189,8 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     # SIGNAL VALIDE
     # =========================================
     reasons = []
-    for s in direction["signals"]:
-        reasons.append(s)
+    for s_item in direction["signals"]:
+        reasons.append(s_item)
     reasons.append(entry["reason"])
     reasons.append(f"Funding rate {market_data_dict.get('funding_rate', 0):+.4f}%")
     if sentiment["reasons"]:
