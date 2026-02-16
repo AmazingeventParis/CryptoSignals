@@ -1505,6 +1505,7 @@ function renderFreqtradeOpen(trades) {
         const cardClass = pnl > 0 ? 'pos-profit' : pnl < 0 ? 'pos-loss' : '';
         const pnlCls = isProfit ? 'up' : 'down';
         const sign = pnl >= 0 ? '+' : '';
+        const chartSymbol = t.symbol.split(':')[0]; // TRUMP/USDT (sans :USDT)
         const sym = t.symbol.replace(':USDT', '').replace('/USDT', '');
         const dir = t.direction === 'long' ? 'LONG' : 'SHORT';
         const dirColor = t.direction === 'long' ? 'var(--green)' : 'var(--red)';
@@ -1555,7 +1556,7 @@ function renderFreqtradeOpen(trades) {
             <div class="pos-levels">
                 <span class="pos-level pos-level-sl">SL ${sl ? sl.toFixed(dec) : '--'}</span>
                 <span class="ft-reason-inline">${t.strategy} · ${t.timeframe}</span>
-                <button class="pos-chart-btn" onclick="openChartModal('${t.symbol}', ${entry}, '${t.direction}')">CHART</button>
+                <button class="pos-chart-btn" onclick="openChartModal('${chartSymbol}', ${entry}, '${t.direction}')">CHART</button>
             </div>
         </div>`;
     }).join('');
