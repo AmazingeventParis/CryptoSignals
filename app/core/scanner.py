@@ -136,7 +136,7 @@ class Scanner:
         last = self._signal_timestamps.get(symbol)
         if not last:
             return False
-        return (datetime.utcnow() - last).total_seconds() < 120
+        return (datetime.utcnow() - last).total_seconds() < 45
 
     def _is_duplicate_signal(self, key: str, new_signal: dict) -> bool:
         if key not in self.last_signals:

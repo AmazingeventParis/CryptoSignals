@@ -40,7 +40,7 @@ scalping:
     filter: "15m"
 
   entry:
-    min_score: 65
+    min_score: 45
     setups:
       - breakout
       - retest
@@ -70,10 +70,10 @@ scalping:
     trail_distance_atr: 0.8
 
   cooldown:
-    after_loss_seconds: 180
-    after_win_seconds: 60
-    max_consecutive_losses: 3
-    pause_after_max_losses_seconds: 900
+    after_loss_seconds: 60
+    after_win_seconds: 30
+    max_consecutive_losses: 5
+    pause_after_max_losses_seconds: 300
 
   risk:
     max_risk_per_trade_pct: 1.0
@@ -89,14 +89,14 @@ swing:
     filter: "1h"
 
   entry:
-    min_score: 70
+    min_score: 50
     setups:
       - breakout
       - retest
       - divergence
       - ema_bounce
       - momentum
-    confirmation_candles: 2
+    confirmation_candles: 1
 
   stop_loss:
     method: "structure"
@@ -119,10 +119,10 @@ swing:
     trail_distance_atr: 1.2
 
   cooldown:
-    after_loss_seconds: 300
-    after_win_seconds: 120
-    max_consecutive_losses: 3
-    pause_after_max_losses_seconds: 1800
+    after_loss_seconds: 120
+    after_win_seconds: 60
+    max_consecutive_losses: 5
+    pause_after_max_losses_seconds: 600
 
   risk:
     max_risk_per_trade_pct: 1.0
@@ -131,7 +131,7 @@ swing:
 
 # --- Couche A: Tradeability Filter ---
 tradeability:
-  min_score: 0.6               # Score minimum pour etre tradable
+  min_score: 0.35              # Score minimum pour etre tradable (assoupli)
   weights:
     volatility: 0.18
     volume: 0.18
@@ -145,11 +145,11 @@ tradeability:
     atr_min_ratio: 0.5         # ATR actuel > 0.5x moyenne
     atr_max_ratio: 3.0         # ATR actuel < 3x moyenne
     # Volume
-    volume_min_ratio: 0.4      # Volume > 0.4x moyenne
+    volume_min_ratio: 0.2      # Volume > 0.2x moyenne (assoupli)
     # Spread
-    spread_max_scalp: 0.05     # Max 0.05% pour scalping
-    spread_max_swing: 0.08     # Max 0.08% pour swing
-    spread_kill: 0.15          # > 0.15% = NON-TRADABLE immediat
+    spread_max_scalp: 0.10     # Max 0.10% pour scalping (assoupli)
+    spread_max_swing: 0.15     # Max 0.15% pour swing (assoupli)
+    spread_kill: 0.30          # > 0.30% = NON-TRADABLE immediat (assoupli)
     # Funding
     funding_max: 0.1           # |funding| < 0.1%
     funding_kill: 0.3          # |funding| > 0.3% = kill
@@ -160,10 +160,10 @@ tradeability:
 direction:
   ema_fast: 20
   ema_slow: 50
-  ema_neutral_threshold: 0.1   # Ecart < 0.1% = NEUTRAL
+  ema_neutral_threshold: 0.05  # Ecart < 0.05% = NEUTRAL (plus strict pour detecter une direction)
   rsi_period: 14
-  rsi_long_threshold: 55
-  rsi_short_threshold: 45
+  rsi_long_threshold: 52
+  rsi_short_threshold: 48
   structure_lookback: 20       # Bougies pour analyser HH/HL/LH/LL
 
 # --- Couche C: Entry Triggers ---
@@ -171,8 +171,8 @@ entry:
   # Breakout compression
   bb_period: 20
   bb_std: 2
-  bb_squeeze_threshold: 0.02   # Bandwidth < 2% = compression
-  volume_spike_ratio: 1.5      # Volume > 1.5x moyenne = spike
+  bb_squeeze_threshold: 0.03   # Bandwidth < 3% = compression (assoupli)
+  volume_spike_ratio: 1.2      # Volume > 1.2x moyenne = spike (assoupli)
 
   # Retest
   retest_buffer_pct: 0.1       # Zone de retest +/- 0.1%
@@ -182,7 +182,7 @@ entry:
   divergence_lookback: 14
 
   # EMA bounce
-  ema_bounce_proximity_pct: 0.15  # Prix a +/- 0.15% de EMA20
+  ema_bounce_proximity_pct: 0.30  # Prix a +/- 0.30% de EMA20 (assoupli)
 
 # --- Scoring ---
 scoring:

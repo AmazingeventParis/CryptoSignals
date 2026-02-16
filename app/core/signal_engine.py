@@ -92,11 +92,9 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str) -> dict:
     direction = evaluate_direction(indicators_filter)
     direction_bias = direction["bias"]
 
+    # En swing, direction neutre = on continue mais avec score direction reduit
     if mode == "swing" and direction_bias == "neutral":
-        return _no_trade(
-            symbol, mode, "Direction neutre sur TF superieur (swing = no trade)",
-            direction["signals"], tradeability["score"]
-        )
+        direction["score"] = max(20, direction["score"] // 2)
 
     # =========================================
     # COUCHE C : ENTRY TRIGGER (timeframe analyse)
