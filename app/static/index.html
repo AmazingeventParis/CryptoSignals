@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=45">
+    <link rel="stylesheet" href="/static/style.css?v=46">
 </head>
 <body>
     <div id="app">
@@ -60,13 +60,10 @@
             <div class="ft-stats-section">
                 <div class="ft-stats-header">
                     <span class="ft-badge">FT</span> Freqtrade
+                    <span id="ft-balance" class="balance">--</span>
                     <span id="ft-status" class="ft-status offline">offline</span>
                 </div>
                 <div class="stats-row">
-                    <div class="stat-card">
-                        <div class="stat-value" id="ft-balance">$0</div>
-                        <div class="stat-label">Balance</div>
-                    </div>
                     <div class="stat-card">
                         <div class="stat-value" id="ft-pnl">$0</div>
                         <div class="stat-label">P&L</div>
@@ -224,6 +221,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=45"></script>
+    <script src="/static/app.js?v=46"></script>
 </body>
 </html>
