@@ -555,6 +555,8 @@ async def ft_closed_trades(limit: int = Query(50, ge=1, le=200)):
                 "strategy": t.get("strategy", ""),
                 "close_reason": t.get("exit_reason", ""),
             })
+        # Trier par close_date decroissant (plus recent d'abord) pour compat avec JS reverse()
+        result.sort(key=lambda t: t.get("close_date") or t.get("open_date") or "", reverse=True)
         return {"trades": result, "count": len(result), "total": data.get("total_trades", 0)}
     except Exception as e:
         return {"trades": [], "count": 0, "error": str(e)}
