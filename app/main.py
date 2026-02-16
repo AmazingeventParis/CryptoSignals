@@ -209,6 +209,7 @@ async def dashboard():
 async def health():
     return {
         "status": "ok",
+        "version": "2026-02-16-v69",
         "scanner_v1_running": scanner_v1.running,
         "scanner_v2_running": scanner_v2.running,
     }
