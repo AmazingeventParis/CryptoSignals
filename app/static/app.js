@@ -1990,20 +1990,18 @@ function updateCompareFtStats(ftStats) {
 }
 
 function buildFtPnlHistory(trades, currentBalance, totalPnl) {
-    // Les trades FT arrivent du plus recent au plus ancien, on inverse
-    const sorted = [...trades].reverse();
-    if (!sorted.length) return [];
+    // Filtrer les trades fermes (avec close_date) et trier par close_date croissant
+    const closed = trades.filter(t => t.close_date);
+    closed.sort((a, b) => new Date(a.close_date) - new Date(b.close_date));
+    if (!closed.length) return [];
 
     // Reconstruire le cumul P&L depuis les trades fermes
     let cumPnl = 0;
     const history = [];
-    for (const t of sorted) {
+    for (const t of closed) {
         const pnl = t.pnl_usd || 0;
         cumPnl += pnl;
-        const ts = t.close_date || t.open_date || '';
-        if (ts) {
-            history.push({ timestamp: ts, cumulative_pnl: cumPnl });
-        }
+        history.push({ timestamp: t.close_date, cumulative_pnl: cumPnl });
     }
     return history;
 }
