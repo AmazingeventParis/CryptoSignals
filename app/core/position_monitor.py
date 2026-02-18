@@ -189,6 +189,9 @@ class PositionMonitor:
 
             # TP1
             if not pos["tp1_hit"]:
+                # --- Early profit protection (avant TP1) ---
+                await self._early_profit_protection(pos, price, direction)
+
                 tp1_hit = (price >= pos["tp1"]) if direction == "long" else (price <= pos["tp1"])
                 if tp1_hit:
                     self._processing.add(pos_id)
@@ -360,6 +363,65 @@ class PositionMonitor:
             symbol, "sl_hit",
             f"{state_label} touche\nPnL: {sign}{pnl:.2f}$"
         )
+
+    # --- Early profit protection ---
+
+    async def _early_profit_protection(self, pos: dict, price: float, direction: str):
+        """Protege les gains AVANT TP1 : breakeven precoce + trailing."""
+        entry_price = pos["entry_price"]
+        tp1_distance = abs(pos["tp1"] - entry_price)
+        if tp1_distance <= 0:
+            return
+
+        if direction == "long":
+            progress = (price - entry_price) / tp1_distance
+        else:
+            progress = (entry_price - price) / tp1_distance
+
+        if progress <= 0:
+            return
+
+        # Lire config early_protection depuis les settings du mode
+        mode = pos.get("mode", "scalping")
+        mode_cfg = self.settings.get(mode, {}) if self.settings else {}
+        early_cfg = mode_cfg.get("early_protection", {})
+        be_trigger = early_cfg.get("breakeven_at_pct", 50) / 100
+        trail_trigger = early_cfg.get("trail_activation_pct", 65) / 100
+        trail_behind = early_cfg.get("trail_behind_pct", 35) / 100
+
+        # 1) Move SL to breakeven
+        if progress >= be_trigger and pos["state"] == "active":
+            sl_moved = False
+            if direction == "long" and pos["stop_loss"] < entry_price:
+                sl_moved = True
+            elif direction == "short" and pos["stop_loss"] > entry_price:
+                sl_moved = True
+
+            if sl_moved:
+                pos["stop_loss"] = entry_price
+                pos["state"] = "breakeven"
+                await update_position(pos["id"], {
+                    "stop_loss": entry_price,
+                    "state": "breakeven",
+                })
+                logger.info(
+                    f"[{self.bot_version}] EARLY BE {pos['symbol']} "
+                    f"(progress {progress:.0%} toward TP1)"
+                )
+
+        # 2) Trail SL to lock profits
+        if progress >= trail_trigger and pos["state"] == "breakeven" and not pos.get("tp1_hit"):
+            lock_pct = progress - trail_behind
+            if direction == "long":
+                new_sl = round(entry_price + tp1_distance * lock_pct, 8)
+                if new_sl > pos["stop_loss"]:
+                    pos["stop_loss"] = new_sl
+                    await update_position(pos["id"], {"stop_loss": new_sl})
+            else:
+                new_sl = round(entry_price - tp1_distance * lock_pct, 8)
+                if new_sl < pos["stop_loss"]:
+                    pos["stop_loss"] = new_sl
+                    await update_position(pos["id"], {"stop_loss": new_sl})
 
     # --- Helpers ordres ---
 

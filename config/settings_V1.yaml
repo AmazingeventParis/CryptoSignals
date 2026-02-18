@@ -61,6 +61,11 @@ scalping:
     tp3_rr: 2.5               # R:R 2.5:1 -> ferme 30%
     tp3_close_pct: 30
 
+  early_protection:
+    breakeven_at_pct: 50     # SL -> breakeven quand 50% du chemin vers TP1
+    trail_activation_pct: 65 # Trailing actif a 65% vers TP1
+    trail_behind_pct: 35     # Trail 35% derriere le progress
+
   break_even:
     trigger: "tp1"
 
@@ -69,8 +74,8 @@ scalping:
     trail_distance_atr: 0.8
 
   cooldown:
-    after_loss_seconds: 180
-    after_win_seconds: 60
+    after_loss_seconds: 300
+    after_win_seconds: 120
     max_consecutive_losses: 3
     pause_after_max_losses_seconds: 900
 
@@ -109,6 +114,11 @@ swing:
     tp2_close_pct: 33
     tp3_rr: 4.0
     tp3_close_pct: 34
+
+  early_protection:
+    breakeven_at_pct: 50
+    trail_activation_pct: 65
+    trail_behind_pct: 35
 
   break_even:
     trigger: "tp1"

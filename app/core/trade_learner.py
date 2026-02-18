@@ -14,8 +14,8 @@ from app.database import (
 logger = logging.getLogger(__name__)
 
 MIN_TRADES = 5          # Minimum de trades avant de juger
-DISABLE_WINRATE = 0.30  # Win rate < 30% apres 5+ trades → desactiver
-REENABLE_WINRATE = 0.40 # Win rate > 40% → reactiver
+DISABLE_WINRATE = 0.40  # Win rate < 40% apres 5+ trades → desactiver
+REENABLE_WINRATE = 0.50 # Win rate > 50% → reactiver
 
 
 class TradeLearner:
