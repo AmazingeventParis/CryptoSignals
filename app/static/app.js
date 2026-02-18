@@ -1,7 +1,7 @@
 const API = '';
 
 // --- State ---
-let currentTab = 'v1';
+let currentTab = localStorage.getItem('activeTab') || 'v1';
 let chartInstance = null;
 let candleSeries = null;
 let volumeSeries = null;
@@ -26,6 +26,7 @@ let comparePeriod = 0;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
+    if (currentTab !== 'v1') switchTab(currentTab);
     refreshAll();
     fetch(`${API}/api/pairs`).then(r => r.json()).then(d => {
         if (d.pairs && d.pairs.length) {
@@ -283,6 +284,7 @@ function renderTrades(trades) {
 function switchTab(tab) {
     if (currentTab === 'charts' && tab !== 'charts') disconnectMexcWs();
     currentTab = tab;
+    localStorage.setItem('activeTab', tab);
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');

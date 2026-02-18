@@ -8,7 +8,7 @@ from app.config import SETTINGS, get_mode_config
 from app.core.indicators import compute_all_indicators
 from app.core.tradeability import evaluate_tradeability
 from app.core.direction import evaluate_direction
-from app.core.entry import find_best_entry, calculate_rr_score
+from app.core.entry import find_best_entry, calculate_rr_score, candle_confirmation
 from app.core.risk_manager import calculate_risk
 from app.services.sentiment import sentiment_analyzer
 
@@ -126,6 +126,20 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
         )
 
     # =========================================
+    # CONFIRMATION BOUGIES
+    # =========================================
+    candle_check = candle_confirmation(entry, indicators_analysis, df_analysis)
+
+    if not candle_check["confirmed"]:
+        return _no_trade(
+            symbol, mode,
+            f"Bougie invalide: {candle_check['reason']}",
+            direction["signals"], tradeability["score"]
+        )
+
+    candle_modifier = candle_check["score_modifier"]
+
+    # =========================================
     # COUCHE D : SENTIMENT
     # =========================================
     sentiment = await sentiment_analyzer.get_sentiment()
@@ -162,7 +176,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
         entry["entry_price"], risk["stop_loss"], risk["tp1"]
     )
     setup_score = entry["pattern_score"] + entry["vol_score"] + rr_score + entry.get("confluence_score", 0)
-    setup_score = min(100, setup_score)
+    setup_score = min(100, max(0, setup_score + candle_modifier))
 
     if entry["direction"] == "long":
         sentiment_normalized = (sentiment_score + 100) / 2
@@ -192,6 +206,8 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
     for s_item in direction["signals"]:
         reasons.append(s_item)
     reasons.append(entry["reason"])
+    if candle_check.get("reason") and candle_check["reason"] != "bougies neutres":
+        reasons.append(f"Bougies: {candle_check['reason']}")
     reasons.append(f"Funding rate {market_data_dict.get('funding_rate', 0):+.4f}%")
     if sentiment["reasons"]:
         reasons.append(f"Sentiment: {', '.join(sentiment['reasons'][:2])}")

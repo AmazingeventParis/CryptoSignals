@@ -335,6 +335,101 @@ def detect_momentum(indicators: dict, direction_bias: str) -> dict | None:
     return None
 
 
+def candle_confirmation(entry: dict, indicators: dict, df) -> dict:
+    """
+    Verifie si les bougies confirment ou contredisent le signal d'entree.
+    Retourne: {"confirmed": bool, "score_modifier": int, "reason": str}
+
+    - Bonus +8 si pattern confirme (engulfing, hammer, shooting_star)
+    - Malus -5 a -15 si contradiction
+    - Rejet (confirmed=False) si grosse bougie resistance au meme niveau
+    """
+    direction = entry.get("direction", "")
+    modifier = 0
+    reasons = []
+
+    candle_ctx = indicators.get("candle_context", {})
+    engulfing = indicators.get("engulfing", "none")
+    doji = indicators.get("doji", "none")
+    hammer = indicators.get("hammer", "none")
+    shooting_star = indicators.get("shooting_star", "none")
+
+    # --- 1. Check anti-resistance (rejet possible) ---
+    if direction == "long" and candle_ctx.get("big_candle_resistance"):
+        return {
+            "confirmed": False,
+            "score_modifier": 0,
+            "reason": "Grosse bougie rouge = resistance au niveau actuel",
+        }
+    if direction == "short" and candle_ctx.get("big_candle_support"):
+        return {
+            "confirmed": False,
+            "score_modifier": 0,
+            "reason": "Grosse bougie verte = support au niveau actuel",
+        }
+
+    # --- 2. Check derniere bougie (malus) ---
+    last_dir = candle_ctx.get("last_candle_direction", "neutral")
+    if direction == "long" and last_dir == "bearish":
+        # Derniere bougie rouge avec corps significatif
+        if df is not None and len(df) >= 1:
+            c = df.iloc[-1]
+            rng = c["high"] - c["low"]
+            body = abs(c["close"] - c["open"])
+            if rng > 0 and body / rng > 0.60:
+                modifier -= 10
+                reasons.append("derniere bougie fortement baissiere")
+    if direction == "short" and last_dir == "bullish":
+        if df is not None and len(df) >= 1:
+            c = df.iloc[-1]
+            rng = c["high"] - c["low"]
+            body = abs(c["close"] - c["open"])
+            if rng > 0 and body / rng > 0.60:
+                modifier -= 10
+                reasons.append("derniere bougie fortement haussiere")
+
+    # --- 3. Check patterns (bonus) ---
+    if direction == "long":
+        if engulfing == "bullish" or hammer == "bullish":
+            modifier += 8
+            pat = "engulfing" if engulfing == "bullish" else "hammer"
+            reasons.append(f"{pat} haussier confirme")
+        if shooting_star == "bearish":
+            modifier -= 15
+            reasons.append("shooting star bearish contredit LONG")
+    elif direction == "short":
+        if engulfing == "bearish" or shooting_star == "bearish":
+            modifier += 8
+            pat = "engulfing" if engulfing == "bearish" else "shooting star"
+            reasons.append(f"{pat} baissier confirme")
+        if hammer == "bullish":
+            modifier -= 15
+            reasons.append("hammer bullish contredit SHORT")
+
+    # Doji = indecision
+    if doji != "none":
+        modifier -= 5
+        reasons.append("doji (indecision)")
+
+    # --- 4. Bougies consecutives opposees (malus) ---
+    consecutive = candle_ctx.get("consecutive_direction", 0)
+    consec_dir = candle_ctx.get("last_candle_direction", "neutral")
+    if consecutive >= 3:
+        if direction == "long" and consec_dir == "bearish":
+            modifier -= 10
+            reasons.append(f"{consecutive} bougies baissières consecutives")
+        elif direction == "short" and consec_dir == "bullish":
+            modifier -= 10
+            reasons.append(f"{consecutive} bougies haussières consecutives")
+
+    reason_str = "; ".join(reasons) if reasons else "bougies neutres"
+    return {
+        "confirmed": True,
+        "score_modifier": modifier,
+        "reason": reason_str,
+    }
+
+
 def calculate_confluence(setups: list[dict]) -> int:
     if len(setups) >= 3:
         return 25

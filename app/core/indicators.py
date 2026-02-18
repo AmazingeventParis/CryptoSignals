@@ -252,6 +252,152 @@ def detect_pin_bar(df: pd.DataFrame) -> str:
     return "none"
 
 
+def detect_doji(df: pd.DataFrame) -> str:
+    """Detecte un doji (corps < 10% du range). Retourne bullish/bearish/neutral."""
+    if len(df) < 2:
+        return "none"
+    candle = df.iloc[-1]
+    total_range = candle["high"] - candle["low"]
+    if total_range == 0:
+        return "none"
+    body = abs(candle["close"] - candle["open"])
+    if body / total_range >= 0.10:
+        return "none"
+    # Doji detecte — direction basee sur la bougie precedente
+    prev = df.iloc[-2]
+    if prev["close"] < prev["open"]:
+        return "bullish"  # doji apres bougie baissiere = retournement potentiel
+    elif prev["close"] > prev["open"]:
+        return "bearish"  # doji apres bougie haussiere = retournement potentiel
+    return "neutral"
+
+
+def detect_hammer(df: pd.DataFrame) -> str:
+    """Detecte un marteau (corps en haut, longue meche basse >2x corps)."""
+    if len(df) < 2:
+        return "none"
+    candle = df.iloc[-1]
+    body = abs(candle["close"] - candle["open"])
+    total_range = candle["high"] - candle["low"]
+    if total_range == 0 or body == 0:
+        return "none"
+    upper_wick = candle["high"] - max(candle["open"], candle["close"])
+    lower_wick = min(candle["open"], candle["close"]) - candle["low"]
+    # Marteau classique : corps en haut, longue meche basse
+    if lower_wick > body * 2 and upper_wick < body * 0.5:
+        prev = df.iloc[-2]
+        if prev["close"] < prev["open"]:
+            return "bullish"  # marteau apres baisse = retournement haussier
+        return "neutral"
+    # Inverted hammer : corps en bas, longue meche haute
+    if upper_wick > body * 2 and lower_wick < body * 0.5:
+        prev = df.iloc[-2]
+        if prev["close"] > prev["open"]:
+            return "bearish"  # inverted hammer apres hausse
+        return "neutral"
+    return "none"
+
+
+def detect_shooting_star(df: pd.DataFrame) -> str:
+    """Detecte une etoile filante (corps en bas, longue meche haute >2x corps)."""
+    if len(df) < 2:
+        return "none"
+    candle = df.iloc[-1]
+    body = abs(candle["close"] - candle["open"])
+    total_range = candle["high"] - candle["low"]
+    if total_range == 0 or body == 0:
+        return "none"
+    upper_wick = candle["high"] - max(candle["open"], candle["close"])
+    lower_wick = min(candle["open"], candle["close"]) - candle["low"]
+    # Etoile filante : corps en bas, longue meche haute
+    if upper_wick > body * 2 and lower_wick < body * 0.5:
+        prev = df.iloc[-2]
+        if prev["close"] > prev["open"]:
+            return "bearish"  # apres hausse = signal de retournement baissier
+        return "neutral"
+    return "none"
+
+
+def analyze_candle_context(df: pd.DataFrame, lookback: int = 5) -> dict:
+    """Analyse les N dernieres bougies pour detecter resistance/support et contexte."""
+    result = {
+        "big_candle_resistance": False,
+        "big_candle_support": False,
+        "last_candle_direction": "neutral",
+        "consecutive_direction": 0,
+        "avg_body_ratio": 0.0,
+    }
+    if len(df) < lookback + 14:
+        return result
+
+    atr_values = atr(df, 14)
+    atr_avg = atr_values.tail(14).mean()
+    if atr_avg == 0 or pd.isna(atr_avg):
+        return result
+
+    recent = df.tail(lookback)
+    current_price = df.iloc[-1]["close"]
+
+    # Seuil grosse bougie : corps > 1.5x ATR moyen
+    big_threshold = atr_avg * 1.5
+
+    body_ratios = []
+    for i in range(len(recent)):
+        candle = recent.iloc[i]
+        body = abs(candle["close"] - candle["open"])
+        total_range = candle["high"] - candle["low"]
+        body_ratios.append(body / total_range if total_range > 0 else 0)
+
+        # Grosse bougie rouge (baissiere) pres du prix actuel = resistance
+        if candle["close"] < candle["open"] and body > big_threshold:
+            candle_top = max(candle["open"], candle["close"])
+            candle_bottom = min(candle["open"], candle["close"])
+            if candle_bottom <= current_price <= candle_top:
+                result["big_candle_resistance"] = True
+
+        # Grosse bougie verte (haussiere) pres du prix actuel = support
+        if candle["close"] > candle["open"] and body > big_threshold:
+            candle_top = max(candle["open"], candle["close"])
+            candle_bottom = min(candle["open"], candle["close"])
+            if candle_bottom <= current_price <= candle_top:
+                result["big_candle_support"] = True
+
+    result["avg_body_ratio"] = sum(body_ratios) / len(body_ratios) if body_ratios else 0
+
+    # Derniere bougie
+    last = df.iloc[-1]
+    last_body = last["close"] - last["open"]
+    last_range = last["high"] - last["low"]
+    if last_range > 0:
+        body_ratio = abs(last_body) / last_range
+        if last_body > 0 and body_ratio > 0.4:
+            result["last_candle_direction"] = "bullish"
+        elif last_body < 0 and body_ratio > 0.4:
+            result["last_candle_direction"] = "bearish"
+
+    # Bougies consecutives dans la meme direction
+    consecutive = 0
+    direction = None
+    for i in range(len(df) - 1, max(len(df) - 10, -1), -1):
+        c = df.iloc[i]
+        if c["close"] > c["open"]:
+            d = "bullish"
+        elif c["close"] < c["open"]:
+            d = "bearish"
+        else:
+            break
+        if direction is None:
+            direction = d
+            consecutive = 1
+        elif d == direction:
+            consecutive += 1
+        else:
+            break
+    result["consecutive_direction"] = consecutive
+
+    return result
+
+
 def compute_all_indicators(df: pd.DataFrame, config: dict) -> dict:
     if df.empty or len(df) < 50:
         return {}
@@ -270,6 +416,10 @@ def compute_all_indicators(df: pd.DataFrame, config: dict) -> dict:
     divergence = detect_divergence(close, rsi_values)
     engulfing = detect_engulfing(df)
     pin_bar = detect_pin_bar(df)
+    doji = detect_doji(df)
+    hammer = detect_hammer(df)
+    shooting_star = detect_shooting_star(df)
+    candle_context = analyze_candle_context(df)
 
     # --- Indicateurs avances ---
     macd_data = macd(close)
@@ -296,6 +446,10 @@ def compute_all_indicators(df: pd.DataFrame, config: dict) -> dict:
         "divergence": divergence,
         "engulfing": engulfing,
         "pin_bar": pin_bar,
+        "doji": doji,
+        "hammer": hammer,
+        "shooting_star": shooting_star,
+        "candle_context": candle_context,
         # Series avancees
         "macd": macd_data,
         "stoch_rsi": stoch_rsi_data,
