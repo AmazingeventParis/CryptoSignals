@@ -22,11 +22,11 @@
 
 ## Deploiement
 
-### Coolify
+### Coolify (Nouveau serveur 217.182.89.133)
 - **URL** : https://crypto.swipego.app
-- **App UUID** : `rww8go0ccggsswg44cokggco`
-- **FQDN** : `http://crypto.swipego.app` (http, pas https - Nginx gere SSL)
-- **Deploy** : `curl -s -X GET "https://coolify.swipego.app/api/v1/deploy?uuid=rww8go0ccggsswg44cokggco&force=true" -H "Authorization: Bearer 1|3zjGA1sbpBEOzOTFJUjWXtU4wCrF4KsL1cJ3ygzVe2970df0"`
+- **App UUID** : `mwk444s084kgkcsg8ko80wco`
+- **FQDN** : `https://crypto.swipego.app` (Traefik gere SSL directement)
+- **Deploy** : `curl -s -X GET "http://217.182.89.133:8000/api/v1/deploy?uuid=mwk444s084kgkcsg8ko80wco&force=true" -H "Authorization: Bearer 1|FNcssp3CipkrPNVSQyv3IboYwGsP8sjPskoBG3ux98e5a576"`
 
 ### Workflow
 ```bash
@@ -37,18 +37,20 @@ git add <fichiers> && git commit -m "message" && git push origin master
 
 ---
 
-## Architecture Dual Bot (v2.0)
+## Architecture Triple Bot (v3.0)
 
 ### Principe
-Deux bots tournent en parallele pour comparer les performances :
+Trois bots tournent en parallele pour comparer les performances :
 - **V1 (strict)** : min_score scalp=65/swing=70, tradeability min 0.60, spread kill 0.15%
 - **V2 (assoupli)** : min_score scalp=45/swing=50, tradeability min 0.35, spread kill 0.30%
+- **V3 (quick profit)** : memes entrees que V2, ferme 100% de la position des $0.10 de gain (`min_profit_usd: 0.10`)
 - **Freqtrade** : bot externe (CombinedStrategy EMA9/21 + RSI + BB + ADX)
 
 ### Configs
-- `config/settings_v1.yaml` — Config stricte
-- `config/settings_v2.yaml` — Config assouplie
-- `app/config.py` — Charge les deux : `SETTINGS_V1`, `SETTINGS_V2`, `SETTINGS = SETTINGS_V2`
+- `config/settings_V1.yaml` — Config stricte
+- `config/settings_V2.yaml` — Config assouplie
+- `config/settings_V3.yaml` — Config quick profit (comme V2 + `min_profit_usd`)
+- `app/config.py` — Charge les trois : `SETTINGS_V1`, `SETTINGS_V2`, `SETTINGS_V3`, `SETTINGS = SETTINGS_V2`
 
 ### Instances
 Plus de singletons. Tout est instancie dans `main.py` :
@@ -56,14 +58,20 @@ Plus de singletons. Tout est instancie dans `main.py` :
 bot_instances = {
     "V1": { scanner, paper_trader, position_monitor },
     "V2": { scanner, paper_trader, position_monitor },
+    "V3": { scanner, paper_trader, position_monitor },
 }
 ```
 - `routes.py` accede aux instances via `_get_bot_instances()`
 - DB : colonne `bot_version` sur toutes les tables (migration auto)
 - Chaque bot a son propre portfolio papier de $100
 
+### V3 Quick Profit Logic
+- Dans `position_monitor.py`, avant toute logique TP/SL, verifie `min_profit_usd` depuis les settings
+- Si le PnL non realise >= seuil ($0.10), ferme 100% de la position immediatement
+- Close reason : `min_profit`, journalise comme un win
+
 ### Ressources partagees
-- `market_data` (MEXC) = une seule connexion, les 2 bots lisent les memes prix
+- `market_data` (MEXC) = une seule connexion, les 3 bots lisent les memes prix
 - `sentiment_analyzer` = partage
 
 ---
@@ -103,9 +111,9 @@ Cypto/
     ├── api/
     │   └── routes.py             # REST endpoints + Freqtrade proxy
     └── static/
-        ├── index.html            # Dashboard (v=66)
-        ├── style.css             # Theme sombre (v=66)
-        ├── app.js                # Frontend JS (v=66)
+        ├── index.html            # Dashboard (v=70)
+        ├── style.css             # Theme sombre (v=70)
+        ├── app.js                # Frontend JS (v=70)
         └── login.html            # Page connexion
 ```
 
@@ -152,19 +160,21 @@ Cypto/
 ### Onglets
 1. **Bot V1** : Positions live V1 + signaux V1
 2. **Bot V2** : Positions live V2 + signaux V2
-3. **FT Freqtrade** : Positions ouvertes + historique FT
-4. **Charts** : Candlestick temps reel + FVG + volume
-5. **Journal** : Trades des 3 bots avec badges V1/V2/FT
-6. **VS Comparaison** : 3 courbes P&L superposees (V1 bleu, V2 violet, FT orange) + stats
-7. **Paires** : Paires surveillees
+3. **Bot V3** : Positions live V3 + signaux V3
+4. **FT Freqtrade** : Positions ouvertes + historique FT
+5. **Charts** : Candlestick temps reel + FVG + volume
+6. **Journal** : Trades des 4 bots avec badges V1/V2/V3/FT
+7. **VS Comparaison** : 4 courbes P&L superposees (V1 bleu, V2 violet, V3 vert, FT orange) + stats
+8. **Paires** : Paires surveillees
 
 ### Sidebar
-3 sections : Bot V1 (bleu), Bot V2 (violet), Freqtrade (orange)
+4 sections : Bot V1 (bleu), Bot V2 (violet), Bot V3 (vert), Freqtrade (orange)
 Chacune avec : status, balance, P&L, Win Rate, Gagnes, Perdus, Signaux, Trades
 
 ### Badges
 - V1 = bleu `#58a6ff`
 - V2 = violet `#bc8cff`
+- V3 = vert `#3fb950`
 - FT = orange `#d29922`
 
 ---
@@ -215,7 +225,7 @@ Chacune avec : status, balance, P&L, Win Rate, Gagnes, Perdus, Signaux, Trades
 ## Freqtrade (bot externe)
 - **URL** : https://freqtrade.swipego.app
 - **API** : admin / Laurytal2
-- **Coolify UUID** : `u0scsw0o08gwsoco0w0swk8k`
+- **Coolify UUID** : `josos8480cswc84g4ggoo0kc`
 - **Config** : Binance Futures dry-run, 100$ USDT, 6 paires, 5m timeframe
 - **Strategie** : CombinedStrategy (EMA9/21 + RSI + BB + ADX)
 
@@ -229,11 +239,11 @@ XRP, DOGE, PEPE, RUNE, SOL, KAITO, BTC, VIRTUAL, TRUMP
 
 ## Points Critiques
 - `order_executor.py` : `position_monitor` passe en parametre (pas d'import singleton)
-- Cache version CSS/JS : incrementer a chaque modif frontend (actuellement **v=66**)
+- Cache version CSS/JS : incrementer a chaque modif frontend (actuellement **v=70**)
 - MEXC API : exchange public (sans cle) pour data, cle API uniquement pour balance
 - WebSocket : relay serveur obligatoire (navigateur bloque connexion directe MEXC)
 - MEXC WS kline fields : `o/h/l/c` = prix, `q`/`a` = volume (PAS `v`)
-- FQDN Coolify en `http://` (pas https) car Nginx gere SSL
+- FQDN Coolify en `https://` — Traefik gere SSL directement (plus de Nginx)
 - Windows : `git add -A` echoue (fichier `nul`), utiliser add explicite
 - Git tags : `v1` (strict original), `v2`, `v2-loosened` (assoupli actuel)
 

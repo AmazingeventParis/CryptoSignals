@@ -15,7 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import websockets
 
-from app.config import SETTINGS, SETTINGS_V1, SETTINGS_V2, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID
+from app.config import SETTINGS, SETTINGS_V1, SETTINGS_V2, SETTINGS_V3, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID
 
 # Auth config
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
@@ -41,33 +41,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Instanciation des 2 bots ---
+# --- Instanciation des 3 bots ---
 scanner_v1 = Scanner("V1", SETTINGS_V1)
 scanner_v2 = Scanner("V2", SETTINGS_V2)
+scanner_v3 = Scanner("V3", SETTINGS_V3)
 paper_trader_v1 = PaperTrader("V1", SETTINGS_V1)
 paper_trader_v2 = PaperTrader("V2", SETTINGS_V2)
+paper_trader_v3 = PaperTrader("V3", SETTINGS_V3)
 position_monitor_v1 = PositionMonitor("V1", SETTINGS_V1)
 position_monitor_v2 = PositionMonitor("V2", SETTINGS_V2)
+position_monitor_v3 = PositionMonitor("V3", SETTINGS_V3)
 
 # Connecter les composants entre eux
 paper_trader_v1.set_position_monitor(position_monitor_v1)
 paper_trader_v2.set_position_monitor(position_monitor_v2)
+paper_trader_v3.set_position_monitor(position_monitor_v3)
 scanner_v1.set_paper_trader(paper_trader_v1)
 scanner_v2.set_paper_trader(paper_trader_v2)
+scanner_v3.set_paper_trader(paper_trader_v3)
 scanner_v1.set_position_monitor(position_monitor_v1)
 scanner_v2.set_position_monitor(position_monitor_v2)
+scanner_v3.set_position_monitor(position_monitor_v3)
 
 # Export pour routes.py
 bot_instances = {
     "V1": {"scanner": scanner_v1, "paper_trader": paper_trader_v1, "position_monitor": position_monitor_v1},
     "V2": {"scanner": scanner_v2, "paper_trader": paper_trader_v2, "position_monitor": position_monitor_v2},
+    "V3": {"scanner": scanner_v3, "paper_trader": paper_trader_v3, "position_monitor": position_monitor_v3},
 }
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Demarrage Crypto Signals Bot (V1 + V2)...")
+    logger.info("Demarrage Crypto Signals Bot (V1 + V2 + V3)...")
     await init_db()
 
     # Connexion MEXC (partagee)
@@ -80,17 +87,20 @@ async def lifespan(app: FastAPI):
     # Demarrer les paper traders (portefeuilles fictifs)
     await paper_trader_v1.start()
     await paper_trader_v2.start()
-    logger.info("Paper Traders V1+V2 demarres")
+    await paper_trader_v3.start()
+    logger.info("Paper Traders V1+V2+V3 demarres")
 
     # Lancer les scanners
     scanner_v1_task = asyncio.create_task(scanner_v1.start())
     scanner_v2_task = asyncio.create_task(scanner_v2.start())
-    logger.info("Scanners V1+V2 lances en arriere-plan")
+    scanner_v3_task = asyncio.create_task(scanner_v3.start())
+    logger.info("Scanners V1+V2+V3 lances en arriere-plan")
 
     # Lancer les position monitors
     monitor_v1_task = asyncio.create_task(position_monitor_v1.start())
     monitor_v2_task = asyncio.create_task(position_monitor_v2.start())
-    logger.info("Position Monitors V1+V2 lances en arriere-plan")
+    monitor_v3_task = asyncio.create_task(position_monitor_v3.start())
+    logger.info("Position Monitors V1+V2+V3 lances en arriere-plan")
 
     yield
 
@@ -98,19 +108,23 @@ async def lifespan(app: FastAPI):
     logger.info("Arret du bot...")
     await scanner_v1.stop()
     await scanner_v2.stop()
+    await scanner_v3.stop()
     scanner_v1_task.cancel()
     scanner_v2_task.cancel()
+    scanner_v3_task.cancel()
     await position_monitor_v1.stop()
     await position_monitor_v2.stop()
+    await position_monitor_v3.stop()
     monitor_v1_task.cancel()
     monitor_v2_task.cancel()
+    monitor_v3_task.cancel()
     await market_data.close()
 
 
 app = FastAPI(
     title="Crypto Signals MEXC",
-    description="Bot de signaux trading crypto pour MEXC Futures (V1 + V2)",
-    version="2.0.0",
+    description="Bot de signaux trading crypto pour MEXC Futures (V1 + V2 + V3)",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -209,9 +223,10 @@ async def dashboard():
 async def health():
     return {
         "status": "ok",
-        "version": "2026-02-16-v69",
+        "version": "2026-02-18-v70",
         "scanner_v1_running": scanner_v1.running,
         "scanner_v2_running": scanner_v2.running,
+        "scanner_v3_running": scanner_v3.running,
     }
 
 
@@ -458,16 +473,17 @@ async def kline_ws(websocket: WebSocket, symbol: str, timeframe: str):
 
 @app.websocket("/ws/positions")
 async def positions_ws(websocket: WebSocket):
-    """WebSocket temps reel : stream les prix et P&L des positions actives (V1+V2)."""
+    """WebSocket temps reel : stream les prix et P&L des positions actives (V1+V2+V3)."""
     await websocket.accept()
     logger.info("WS positions client connecte")
 
     try:
         while True:
-            # Combiner positions V1 et V2
+            # Combiner positions V1, V2 et V3
             positions_v1 = list(position_monitor_v1._positions.values())
             positions_v2 = list(position_monitor_v2._positions.values())
-            all_positions = positions_v1 + positions_v2
+            positions_v3 = list(position_monitor_v3._positions.values())
+            all_positions = positions_v1 + positions_v2 + positions_v3
             active = [p for p in all_positions if p.get("state") != "closed"]
 
             if not active:
@@ -522,7 +538,8 @@ async def positions_ws(websocket: WebSocket):
                         # Re-checker les positions actives
                         new_v1 = list(position_monitor_v1._positions.values())
                         new_v2 = list(position_monitor_v2._positions.values())
-                        new_active = [p for p in new_v1 + new_v2 if p.get("state") != "closed"]
+                        new_v3 = list(position_monitor_v3._positions.values())
+                        new_active = [p for p in new_v1 + new_v2 + new_v3 if p.get("state") != "closed"]
                         new_symbols = set(p["symbol"] for p in new_active)
                         if new_symbols != set(symbols):
                             break

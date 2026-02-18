@@ -6,7 +6,7 @@ import httpx
 from fastapi import APIRouter, Query
 from app.database import get_signals, get_trades, get_stats, get_active_positions
 from app.core.market_data import market_data
-from app.config import get_enabled_pairs, SETTINGS, SETTINGS_V1, SETTINGS_V2, APP_MODE, reload_settings, get_mode_config
+from app.config import get_enabled_pairs, SETTINGS, SETTINGS_V1, SETTINGS_V2, SETTINGS_V3, APP_MODE, reload_settings, get_mode_config
 
 router = APIRouter(prefix="/api")
 
@@ -29,6 +29,7 @@ async def get_status():
         "scanners": {
             "V1": bots["V1"]["scanner"].get_status(),
             "V2": bots["V2"]["scanner"].get_status(),
+            "V3": bots["V3"]["scanner"].get_status(),
         },
     }
 
@@ -148,7 +149,7 @@ async def debug_pair(symbol: str, mode: str = Query("scalping"), bot_version: st
     """Debug: analyse une paire et retourne le resultat complet."""
     from app.core.signal_engine import analyze_pair
     symbol_fmt = symbol.replace("-", "/")
-    s = SETTINGS_V1 if bot_version == "V1" else SETTINGS_V2
+    s = SETTINGS_V1 if bot_version == "V1" else SETTINGS_V3 if bot_version == "V3" else SETTINGS_V2
     mode_cfg = get_mode_config(mode, s)
     if not mode_cfg:
         return {"error": "Mode inconnu"}

@@ -187,6 +187,18 @@ class PositionMonitor:
 
             direction = pos["direction"]
 
+            # --- Quick profit check (V3: ferme des min_profit_usd atteint) ---
+            min_profit = self._get_min_profit_usd(pos)
+            if min_profit > 0:
+                current_pnl = self._calc_unrealized_pnl(pos, price)
+                if current_pnl >= min_profit:
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_min_profit_close(pos, price, current_pnl)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
+
             # TP1
             if not pos["tp1_hit"]:
                 # --- Early profit protection (avant TP1) ---
@@ -422,6 +434,44 @@ class PositionMonitor:
                 if new_sl < pos["stop_loss"]:
                     pos["stop_loss"] = new_sl
                     await update_position(pos["id"], {"stop_loss": new_sl})
+
+    # --- Quick profit (V3) ---
+
+    def _get_min_profit_usd(self, pos: dict) -> float:
+        mode = pos.get("mode", "scalping")
+        mode_cfg = self.settings.get(mode, {}) if self.settings else {}
+        return mode_cfg.get("min_profit_usd", 0)
+
+    def _calc_unrealized_pnl(self, pos: dict, price: float) -> float:
+        entry = pos["entry_price"]
+        direction = pos["direction"]
+        qty = pos["remaining_quantity"]
+        diff = (price - entry) if direction == "long" else (entry - price)
+        unrealized = diff * qty
+        realized = 0.0
+        if pos.get("tp1_hit"):
+            tp1_qty = pos["original_quantity"] * (pos["tp1_close_pct"] / 100)
+            d = (pos["tp1"] - entry) if direction == "long" else (entry - pos["tp1"])
+            realized += d * tp1_qty
+        if pos.get("tp2_hit"):
+            tp2_qty = pos["original_quantity"] * (pos["tp2_close_pct"] / 100)
+            d = (pos["tp2"] - entry) if direction == "long" else (entry - pos["tp2"])
+            realized += d * tp2_qty
+        return realized + unrealized
+
+    async def _handle_min_profit_close(self, pos: dict, price: float, pnl_usd: float):
+        symbol = pos["symbol"]
+        logger.info(f"[{self.bot_version}] MIN_PROFIT CLOSE {symbol} PnL={pnl_usd:.4f}$")
+
+        await self._cancel_remaining_tp_orders(pos)
+        await self._cancel_order_safe(pos.get("sl_order_id"), symbol)
+        await self._close_and_journal(pos, "min_profit", price, pnl_usd)
+        pos["state"] = "closed"
+
+        await send_trade_update(
+            symbol, "min_profit",
+            f"Quick profit ! Position fermee 100%\nPnL: +{pnl_usd:.2f}$"
+        )
 
     # --- Helpers ordres ---
 

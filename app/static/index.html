@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=69">
+    <link rel="stylesheet" href="/static/style.css?v=70">
 </head>
 <body>
     <div id="app">
@@ -63,6 +63,28 @@
                 </div>
             </div>
 
+            <!-- Bot V3 (quick profit) -->
+            <div class="bot-section">
+                <header class="header bot-header">
+                    <div class="header-left">
+                        <h1><span class="v3-badge">V3</span> Bot V3</h1>
+                        <span id="v3-status" class="badge badge-offline">offline</span>
+                    </div>
+                    <div class="header-right">
+                        <span id="v3-balance" class="balance">--</span>
+                        <button onclick="resetPaper('V3')" class="btn-icon" title="Reset V3" style="font-size:12px">RST</button>
+                    </div>
+                </header>
+                <div class="stats-row">
+                    <div class="stat-card"><div class="stat-value" id="v3-pnl">$0</div><div class="stat-label">P&L</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v3-winrate">0%</div><div class="stat-label">Win Rate</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v3-wins" style="color:var(--green)">0</div><div class="stat-label">Gagnes</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v3-losses" style="color:var(--red)">0</div><div class="stat-label">Perdus</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v3-active">0</div><div class="stat-label">Signaux</div></div>
+                    <div class="stat-card"><div class="stat-value" id="v3-trades">0</div><div class="stat-label">Trades</div></div>
+                </div>
+            </div>
+
             <!-- Freqtrade Stats -->
             <div class="ft-stats-section">
                 <header class="header ft-header">
@@ -91,6 +113,7 @@
             <div class="tabs">
                 <button class="tab active" onclick="switchTab('v1')"><span class="v1-badge-sm">V1</span> Bot V1</button>
                 <button class="tab" onclick="switchTab('v2')"><span class="v2-badge-sm">V2</span> Bot V2</button>
+                <button class="tab" onclick="switchTab('v3')"><span class="v3-badge-sm">V3</span> Bot V3</button>
                 <button class="tab" onclick="switchTab('freqtrade')"><span class="ft-badge-sm">FT</span> Freqtrade</button>
                 <button class="tab" onclick="switchTab('charts')">Charts</button>
                 <button class="tab" onclick="switchTab('trades')">Journal</button>
@@ -111,6 +134,14 @@
                 <div id="v2-positions-live" class="positions-live"></div>
                 <div id="v2-signals-list" class="signals-list">
                     <div class="empty-state">Chargement des signaux V2...</div>
+                </div>
+            </div>
+
+            <!-- V3 Tab -->
+            <div id="tab-v3" class="tab-content">
+                <div id="v3-positions-live" class="positions-live"></div>
+                <div id="v3-signals-list" class="signals-list">
+                    <div class="empty-state">Chargement des signaux V3...</div>
                 </div>
             </div>
 
@@ -159,7 +190,7 @@
             <!-- Compare Tab -->
             <div id="tab-compare" class="tab-content">
                 <div class="compare-header">
-                    <h2>V1 vs V2 vs FT — Performance</h2>
+                    <h2>V1 vs V2 vs V3 vs FT — Performance</h2>
                     <div class="compare-period-selector">
                         <button class="period-btn active" onclick="changeCompPeriod(0)">Tout</button>
                         <button class="period-btn" onclick="changeCompPeriod(7)">7j</button>
@@ -182,6 +213,14 @@
                         <div class="compare-stat"><span class="label">Trades</span><span id="comp-v2-trades" class="value">0</span></div>
                         <div class="compare-stat"><span class="label">Win Rate</span><span id="comp-v2-winrate" class="value">0%</span></div>
                         <div class="compare-stat"><span class="label">Gagnes / Perdus</span><span id="comp-v2-wl" class="value">0 / 0</span></div>
+                    </div>
+                    <div class="compare-col compare-v3">
+                        <div class="compare-col-header"><span class="v3-badge">V3</span> Bot V3 (quick profit)</div>
+                        <div class="compare-stat"><span class="label">Balance</span><span id="comp-v3-balance" class="value">$100</span></div>
+                        <div class="compare-stat"><span class="label">P&L</span><span id="comp-v3-pnl" class="value">$0</span></div>
+                        <div class="compare-stat"><span class="label">Trades</span><span id="comp-v3-trades" class="value">0</span></div>
+                        <div class="compare-stat"><span class="label">Win Rate</span><span id="comp-v3-winrate" class="value">0%</span></div>
+                        <div class="compare-stat"><span class="label">Gagnes / Perdus</span><span id="comp-v3-wl" class="value">0 / 0</span></div>
                     </div>
                     <div class="compare-col compare-ft">
                         <div class="compare-col-header"><span class="ft-badge">FT</span> Freqtrade</div>
@@ -265,6 +304,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=69"></script>
+    <script src="/static/app.js?v=70"></script>
 </body>
 </html>
