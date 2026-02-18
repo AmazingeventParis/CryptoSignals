@@ -26,7 +26,9 @@ let comparePeriod = 0;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
-    if (currentTab !== 'v1') switchTab(currentTab);
+    const savedTab = currentTab;
+    currentTab = 'v1';
+    if (savedTab !== 'v1') switchTab(savedTab);
     refreshAll();
     fetch(`${API}/api/pairs`).then(r => r.json()).then(d => {
         if (d.pairs && d.pairs.length) {
