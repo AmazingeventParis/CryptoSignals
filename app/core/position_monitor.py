@@ -187,7 +187,7 @@ class PositionMonitor:
 
             direction = pos["direction"]
 
-            # --- Quick profit check (V3: ferme des min_profit_usd atteint) ---
+            # --- Quick profit / max loss check (V3) ---
             min_profit = self._get_min_profit_usd(pos)
             if min_profit > 0:
                 current_pnl = self._calc_unrealized_pnl(pos, price)
@@ -195,6 +195,14 @@ class PositionMonitor:
                     self._processing.add(pos_id)
                     try:
                         await self._handle_min_profit_close(pos, price, current_pnl)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
+                max_loss = self._get_max_loss_usd(pos)
+                if max_loss > 0 and current_pnl <= -max_loss:
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_max_loss_close(pos, price, current_pnl)
                     finally:
                         self._processing.discard(pos_id)
                     continue
@@ -442,6 +450,11 @@ class PositionMonitor:
         mode_cfg = self.settings.get(mode, {}) if self.settings else {}
         return mode_cfg.get("min_profit_usd", 0)
 
+    def _get_max_loss_usd(self, pos: dict) -> float:
+        mode = pos.get("mode", "scalping")
+        mode_cfg = self.settings.get(mode, {}) if self.settings else {}
+        return mode_cfg.get("max_loss_usd", 0)
+
     def _calc_unrealized_pnl(self, pos: dict, price: float) -> float:
         entry = pos["entry_price"]
         direction = pos["direction"]
@@ -471,6 +484,20 @@ class PositionMonitor:
         await send_trade_update(
             symbol, "min_profit",
             f"Quick profit ! Position fermee 100%\nPnL: +{pnl_usd:.2f}$"
+        )
+
+    async def _handle_max_loss_close(self, pos: dict, price: float, pnl_usd: float):
+        symbol = pos["symbol"]
+        logger.info(f"[{self.bot_version}] MAX_LOSS CLOSE {symbol} PnL={pnl_usd:.4f}$")
+
+        await self._cancel_remaining_tp_orders(pos)
+        await self._cancel_order_safe(pos.get("sl_order_id"), symbol)
+        await self._close_and_journal(pos, "max_loss", price, pnl_usd)
+        pos["state"] = "closed"
+
+        await send_trade_update(
+            symbol, "max_loss",
+            f"Stop loss rapide ! Position fermee 100%\nPnL: {pnl_usd:.2f}$"
         )
 
     # --- Helpers ordres ---

@@ -62,8 +62,9 @@ scalping:
     tp3_rr: 2.0
     tp3_close_pct: 20
 
-  # V3: ferme 100% des $0.10 de gain
+  # V3: ferme 100% des $0.10 de gain, coupe a -$0.15 de perte
   min_profit_usd: 0.10
+  max_loss_usd: 0.15
 
   early_protection:
     breakeven_at_pct: 50
@@ -119,8 +120,9 @@ swing:
     tp3_rr: 3.0
     tp3_close_pct: 25
 
-  # V3: ferme 100% des $0.10 de gain
+  # V3: ferme 100% des $0.10 de gain, coupe a -$0.15 de perte
   min_profit_usd: 0.10
+  max_loss_usd: 0.15
 
   early_protection:
     breakeven_at_pct: 50
