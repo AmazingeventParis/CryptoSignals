@@ -1,3 +1,5 @@
+> **IMPORTANT** : Lis `project-state.md` au demarrage pour comprendre l'etat complet du projet.
+
 # CryptoSignals - Reference Projet
 
 ## REGLE ABSOLUE
