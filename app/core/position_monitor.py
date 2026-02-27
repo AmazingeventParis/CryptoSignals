@@ -202,13 +202,22 @@ class PositionMonitor:
             if pos_id in self._processing:
                 continue
 
-            # --- V4 only: Track max profit / max drawdown + stale timeout ---
+            # --- V4 only: Track max profit / max drawdown + stale timeout + quick exit ---
             if self.bot_version == "V4":
                 current_pnl_track = self._calc_unrealized_pnl(pos, price)
                 if current_pnl_track > pos.get("_max_profit_usd", 0):
                     pos["_max_profit_usd"] = current_pnl_track
                 if current_pnl_track < pos.get("_max_drawdown_usd", 0):
                     pos["_max_drawdown_usd"] = current_pnl_track
+
+                # V4: Quick exit — after N seconds, if profit > fees*mult → close
+                if self._check_quick_exit(pos, current_pnl_track):
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_quick_exit(pos, price, current_pnl_track)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
 
                 if self._check_stale_position(pos, current_pnl_track):
                     self._processing.add(pos_id)
@@ -387,32 +396,33 @@ class PositionMonitor:
 
     async def _handle_tp1_hit(self, pos: dict):
         symbol = pos["symbol"]
-        entry_price = pos["entry_price"]
-        logger.info(f"[{self.bot_version}] TP1 HIT {symbol} - SL -> breakeven ({entry_price})")
+        # V4: Real breakeven includes fees, not just entry price
+        be_price = self._fee_adjusted_breakeven(pos)
+        logger.info(f"[{self.bot_version}] TP1 HIT {symbol} - SL -> breakeven ({be_price})")
 
         await self._cancel_order_safe(pos["sl_order_id"], symbol)
 
         qty_remaining = round(pos["original_quantity"] * (1 - pos["tp1_close_pct"] / 100), 6)
-        new_sl_id = await self._place_new_sl(symbol, pos["direction"], qty_remaining, entry_price)
+        new_sl_id = await self._place_new_sl(symbol, pos["direction"], qty_remaining, be_price)
 
         await update_position(pos["id"], {
             "tp1_hit": 1,
             "sl_order_id": new_sl_id,
-            "stop_loss": entry_price,
+            "stop_loss": be_price,
             "remaining_quantity": qty_remaining,
             "state": "breakeven",
         })
 
         pos["tp1_hit"] = 1
         pos["sl_order_id"] = new_sl_id
-        pos["stop_loss"] = entry_price
+        pos["stop_loss"] = be_price
         pos["remaining_quantity"] = qty_remaining
         pos["state"] = "breakeven"
 
-        dec = self._get_decimals(entry_price)
+        dec = self._get_decimals(be_price)
         await send_trade_update(
             symbol, "tp1_hit",
-            f"TP1 touche ! {pos['tp1_close_pct']}% ferme\nSL -> breakeven @ {entry_price:.{dec}f}"
+            f"TP1 touche ! {pos['tp1_close_pct']}% ferme\nSL -> breakeven @ {be_price:.{dec}f}"
         )
 
     async def _handle_tp2_hit(self, pos: dict):
@@ -548,24 +558,25 @@ class PositionMonitor:
         trail_trigger = early_cfg.get("trail_activation_pct", 65) / 100
         trail_behind = early_cfg.get("trail_behind_pct", 35) / 100
 
-        # 1) Move SL to breakeven
+        # 1) Move SL to breakeven (V4: fee-adjusted breakeven)
+        be_price = self._fee_adjusted_breakeven(pos)
         if progress >= be_trigger and pos["state"] == "active":
             sl_moved = False
-            if direction == "long" and pos["stop_loss"] < entry_price:
+            if direction == "long" and pos["stop_loss"] < be_price:
                 sl_moved = True
-            elif direction == "short" and pos["stop_loss"] > entry_price:
+            elif direction == "short" and pos["stop_loss"] > be_price:
                 sl_moved = True
 
             if sl_moved:
-                pos["stop_loss"] = entry_price
+                pos["stop_loss"] = be_price
                 pos["state"] = "breakeven"
                 await update_position(pos["id"], {
-                    "stop_loss": entry_price,
+                    "stop_loss": be_price,
                     "state": "breakeven",
                 })
                 logger.info(
                     f"[{self.bot_version}] EARLY BE {pos['symbol']} "
-                    f"(progress {progress:.0%} toward TP1)"
+                    f"@ {be_price} (progress {progress:.0%} toward TP1)"
                 )
 
         # 2) Trail SL to lock profits
@@ -587,7 +598,16 @@ class PositionMonitor:
     def _get_min_profit_usd(self, pos: dict) -> float:
         mode = pos.get("mode", "scalping")
         mode_cfg = self.settings.get(mode, {}) if self.settings else {}
-        return mode_cfg.get("min_profit_usd", 0)
+        fixed_min = mode_cfg.get("min_profit_usd", 0)
+
+        # V4: Fee-aware min profit = max(fees * multiplier, fixed_min, $0.05)
+        if self.bot_version == "V4" and self.settings:
+            fee_cfg = self.settings.get("fee_exit", {})
+            mult = fee_cfg.get("min_profit_multiplier", 1.5)
+            fees = self._get_rt_fees(pos)
+            return max(fees * mult, fixed_min, 0.05)
+
+        return fixed_min
 
     def _get_max_loss_usd(self, pos: dict) -> float:
         mode = pos.get("mode", "scalping")
@@ -637,6 +657,55 @@ class PositionMonitor:
         await send_trade_update(
             symbol, "max_loss",
             f"Stop loss rapide ! Position fermee 100%\nPnL: {pnl_usd:.2f}$"
+        )
+
+    # --- V4: Fee-aware quick exit ---
+
+    def _get_rt_fees(self, pos: dict) -> float:
+        """Calculate round-trip fees for a position."""
+        if not self.settings:
+            return 0
+        taker_pct = self.settings.get("fees", {}).get("taker_pct", 0)
+        position_size = pos.get("position_size_usd", 0)
+        return position_size * (taker_pct / 100) * 2
+
+    def _check_quick_exit(self, pos: dict, current_pnl: float) -> bool:
+        """V4: If position is profitable above fees*mult after N seconds, take profit."""
+        if self.bot_version != "V4" or not self.settings:
+            return False
+        fee_exit_cfg = self.settings.get("fee_exit", {})
+        quick_seconds = fee_exit_cfg.get("quick_exit_seconds", 90)
+        quick_mult = fee_exit_cfg.get("quick_exit_fee_mult", 2.0)
+
+        entry_time = pos.get("entry_time") or pos.get("created_at")
+        if not entry_time:
+            return False
+        try:
+            elapsed = (datetime.utcnow() - datetime.fromisoformat(entry_time)).total_seconds()
+        except Exception:
+            return False
+
+        if elapsed < quick_seconds:
+            return False
+
+        fees = self._get_rt_fees(pos)
+        # Net PnL after fees must be positive
+        net_pnl = current_pnl - fees
+        return net_pnl >= fees * (quick_mult - 1)  # profit above fees threshold
+
+    async def _handle_quick_exit(self, pos: dict, price: float, pnl_usd: float):
+        symbol = pos["symbol"]
+        fees = self._get_rt_fees(pos)
+        logger.info(f"[{self.bot_version}] QUICK EXIT {symbol} gross={pnl_usd:.4f}$ fees={fees:.4f}$ net={pnl_usd - fees:.4f}$")
+
+        await self._cancel_remaining_tp_orders(pos)
+        await self._cancel_order_safe(pos.get("sl_order_id"), symbol)
+        await self._close_and_journal(pos, "quick_exit", price, pnl_usd)
+        pos["state"] = "closed"
+
+        await send_trade_update(
+            symbol, "quick_exit",
+            f"Quick exit profitable ! Net: {pnl_usd - fees:+.4f}$"
         )
 
     # --- Stale position timeout ---
@@ -899,6 +968,26 @@ class PositionMonitor:
                 await cb(pos["id"], pnl_usd)
             except Exception as e:
                 logger.error(f"Erreur callback on_close: {e}")
+
+    def _fee_adjusted_breakeven(self, pos: dict) -> float:
+        """Calculate real breakeven = entry + round-trip fees (V4 only).
+        Without this, a 'breakeven' close actually loses the fee amount."""
+        entry = pos["entry_price"]
+        if self.bot_version != "V4" or not self.settings:
+            return entry
+        taker_pct = self.settings.get("fees", {}).get("taker_pct", 0)
+        if taker_pct <= 0:
+            return entry
+        position_size = pos.get("position_size_usd", 0)
+        qty = pos.get("remaining_quantity") or pos.get("original_quantity", 0)
+        if qty <= 0:
+            return entry
+        fees_total = position_size * (taker_pct / 100) * 2  # round-trip
+        fee_per_unit = fees_total / qty
+        if pos["direction"] == "long":
+            return round(entry + fee_per_unit, 8)
+        else:
+            return round(entry - fee_per_unit, 8)
 
     @staticmethod
     def _get_decimals(price: float) -> int:

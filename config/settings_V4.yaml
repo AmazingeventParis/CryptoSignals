@@ -63,21 +63,22 @@ scalping:
 
   stop_loss:
     method: "atr"
-    atr_multiplier: 1.8
-    max_stop_pct: 0.7
+    atr_multiplier: 1.2
+    max_stop_pct: 0.5
+    min_stop_pct: 0.15        # plancher: TP1 a 0.5 R:R > frais 0.12%
 
   take_profit:
-    tp1_rr: 1.0
-    tp1_close_pct: 50
-    tp2_rr: 1.5
-    tp2_close_pct: 30
-    tp3_rr: 2.0
-    tp3_close_pct: 20
+    tp1_rr: 0.5
+    tp1_close_pct: 70
+    tp2_rr: 0.8
+    tp2_close_pct: 20
+    tp3_rr: 1.2
+    tp3_close_pct: 10
 
   early_protection:
-    breakeven_at_pct: 50
-    trail_activation_pct: 65
-    trail_behind_pct: 35
+    breakeven_at_pct: 40
+    trail_activation_pct: 55
+    trail_behind_pct: 30
 
   max_hold_seconds: 1800     # V4: 30 min max pour scalping stagnant
 
@@ -121,19 +122,20 @@ swing:
     method: "structure"
     buffer_atr: 0.5
     max_stop_pct: 1.0
+    min_stop_pct: 0.20        # plancher: TP1 a 0.8 R:R > frais 0.12%
 
   take_profit:
-    tp1_rr: 1.5
-    tp1_close_pct: 45
-    tp2_rr: 2.0
-    tp2_close_pct: 30
-    tp3_rr: 3.0
-    tp3_close_pct: 25
+    tp1_rr: 0.8
+    tp1_close_pct: 60
+    tp2_rr: 1.2
+    tp2_close_pct: 25
+    tp3_rr: 2.0
+    tp3_close_pct: 15
 
   early_protection:
-    breakeven_at_pct: 50
-    trail_activation_pct: 65
-    trail_behind_pct: 35
+    breakeven_at_pct: 40
+    trail_activation_pct: 55
+    trail_behind_pct: 30
 
   max_hold_seconds: 7200     # V4: 2h max pour swing stagnant
 
@@ -219,6 +221,18 @@ scoring:
 # --- V4 specifique ---
 # Direction neutre en swing = AUTORISE (comme V2)
 swing_neutral_allowed: true
+
+# --- Pair-mode filtering (scalping interdit pour paires a faible ATR%) ---
+pair_mode_filter:
+  scalping_excluded:
+    - "BTC/USDT:USDT"       # TP1 < frais en scalping
+  swing_only: []              # paires autorisees uniquement en swing
+
+# --- Fee-aware exits ---
+fee_exit:
+  min_profit_multiplier: 1.5  # min_profit = fees * 1.5
+  quick_exit_seconds: 90      # si profit > fees*2 apres 90s → close
+  quick_exit_fee_mult: 1.2    # seuil quick exit: net > fees * 0.2 (juste au-dessus du breakeven)
 
 # --- V4 Features ---
 v4_features:

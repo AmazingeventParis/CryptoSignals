@@ -30,6 +30,12 @@ def calculate_risk(
     max_stop = entry_price * (sl_cfg.get("max_stop_pct", 1.0) / 100)
     sl_distance = min(sl_distance, max_stop)
 
+    # Plancher SL: garantir que TP1 > frais round-trip (V4 fee protection)
+    min_stop_pct = sl_cfg.get("min_stop_pct", 0)
+    if min_stop_pct > 0:
+        min_stop = entry_price * (min_stop_pct / 100)
+        sl_distance = max(sl_distance, min_stop)
+
     if direction == "long":
         stop_loss = entry_price - sl_distance
     else:

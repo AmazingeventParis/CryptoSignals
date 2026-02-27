@@ -73,6 +73,13 @@ class Scanner:
 
         # Phase 2: Analyze all pairs x modes in parallel
         async def _analyze_one(symbol: str, mode: str, data: dict):
+            # V4: Pair-mode filtering (skip excluded combos)
+            pair_filter = self.settings.get("pair_mode_filter", {})
+            if mode == "scalping" and symbol in pair_filter.get("scalping_excluded", []):
+                return
+            if pair_filter.get("swing_only") and symbol in pair_filter["swing_only"] and mode != "swing":
+                return
+
             key = f"{symbol}_{mode}"
             if key in self.cooldowns and datetime.utcnow() < self.cooldowns[key]:
                 return
