@@ -17,16 +17,17 @@ from app.database import (
 
 logger = logging.getLogger(__name__)
 
-# 8 dimensions d'apprentissage
+# 9 dimensions d'apprentissage
 DIMENSIONS = [
-    "setup_type",    # breakout, retest, divergence, ema_bounce, momentum
-    "symbol",        # les 9 paires
-    "mode",          # scalping, swing
-    "regime",        # trending, ranging, volatile
-    "hour_group",    # asian, european, us
-    "score_range",   # 50-59, 60-69, 70-79, 80+
-    "direction",     # long, short
+    "setup_type",     # breakout, retest, divergence, ema_bounce, momentum
+    "symbol",         # les paires
+    "mode",           # scalping, swing
+    "regime",         # trending, ranging, volatile
+    "hour_group",     # asian, european, us
+    "score_range",    # 50-59, 60-69, 70-79, 80+
+    "direction",      # long, short
     "mtf_confluence", # negative, zero, positive
+    "candle_pattern", # engulfing, hammer, shooting_star, doji, pin_bar, none
 ]
 
 CACHE_REFRESH_SECONDS = 120  # Refresh cache toutes les 2 minutes
@@ -93,7 +94,7 @@ class AdaptiveLearner:
     def get_total_modifier(self, signal_context: dict) -> tuple[int, list[str]]:
         """
         Calcule le modificateur total a appliquer au score final.
-        signal_context contient: setup_type, symbol, mode, regime, hour_utc, score, direction, mtf_confluence
+        signal_context contient: setup_type, symbol, mode, regime, hour_utc, score, direction, mtf_confluence, candle_pattern
         Retourne (modifier, reasons).
         """
         total = 0
@@ -108,7 +109,13 @@ class AdaptiveLearner:
             "score_range": _score_to_range(signal_context.get("score", 0)),
             "direction": signal_context.get("direction", ""),
             "mtf_confluence": _mtf_to_label(signal_context.get("mtf_confluence")),
+            "candle_pattern": signal_context.get("candle_pattern", "none"),
         }
+
+        # Count dimensions in edge decay
+        decay_count = 0
+        decayed_dims = self.get_decayed_dimensions()
+        decayed_keys = {f"{d['dimension']}:{d['value']}" for d in decayed_dims}
 
         for dim, val in mappings.items():
             if not val:
@@ -122,9 +129,52 @@ class AdaptiveLearner:
                 total += mod
                 reasons.append(f"{dim}={val} {mod:+.0f}pts (WR {w.get('win_rate_7d', 0):.0f}%)")
 
+            # Edge decay auto-penalty: -5 pts per decaying dimension
+            if key in decayed_keys:
+                total -= 5
+                decay_count += 1
+                reasons.append(f"{dim}={val} edge_decay -5pts")
+
+        # 3+ dimensions in decay = suppress signal
+        signal_suppressed = decay_count >= 3
+        if signal_suppressed:
+            reasons.append(f"SIGNAL SUPPRESSED: {decay_count} dimensions in edge decay")
+
         # Cap le modificateur total
         total = max(MODIFIER_CAP_MIN, min(MODIFIER_CAP_MAX, total))
         return int(total), reasons
+
+    def is_signal_suppressed(self, signal_context: dict) -> bool:
+        """Check if signal should be suppressed due to edge decay."""
+        mappings = {
+            "setup_type": signal_context.get("setup_type", ""),
+            "symbol": signal_context.get("symbol", ""),
+            "mode": signal_context.get("mode", ""),
+            "regime": signal_context.get("regime", ""),
+            "direction": signal_context.get("direction", ""),
+            "candle_pattern": signal_context.get("candle_pattern", "none"),
+        }
+        decayed_dims = self.get_decayed_dimensions()
+        decayed_keys = {f"{d['dimension']}:{d['value']}" for d in decayed_dims}
+        decay_count = sum(1 for dim, val in mappings.items() if val and f"{dim}:{val}" in decayed_keys)
+        return decay_count >= 3
+
+    def get_decayed_dimensions(self) -> list[dict]:
+        """Retourne les dimensions en edge decay (WR 7d chute > 20% vs 30d)."""
+        decayed = []
+        for key, w in self._cache.items():
+            wr_7d = w.get("win_rate_7d", 0)
+            wr_30d = w.get("win_rate_30d", 0)
+            sample = w.get("sample_size", 0)
+            if sample >= MIN_TRADES_FOR_MODIFIER and wr_30d > 0 and (wr_30d - wr_7d) >= 20:
+                decayed.append({
+                    "dimension": w["dimension"],
+                    "value": w["dimension_value"],
+                    "wr_7d": wr_7d,
+                    "wr_30d": wr_30d,
+                    "drop": round(wr_30d - wr_7d, 1),
+                })
+        return decayed
 
     async def record_trade_context(self, context: dict):
         """
@@ -148,6 +198,7 @@ class AdaptiveLearner:
                     "score_range": _score_to_range(context.get("final_score", 0)),
                     "direction": context.get("direction", ""),
                     "mtf_confluence": _mtf_to_label(context.get("mtf_confluence")),
+                    "candle_pattern": context.get("candle_pattern", "none"),
                 }
 
                 for dim, val in dims.items():
@@ -216,6 +267,8 @@ class AdaptiveLearner:
             return trade.get("direction", "")
         elif dim == "mtf_confluence":
             return _mtf_to_label(trade.get("mtf_confluence"))
+        elif dim == "candle_pattern":
+            return trade.get("candle_pattern", "none")
         return ""
 
     def _calc_win_rate(self, trades: list[dict], dim: str, val: str) -> float:
@@ -230,20 +283,29 @@ class AdaptiveLearner:
 
     @staticmethod
     def _compute_modifier(wr_7d: float, wr_30d: float, sample: int) -> float:
-        """Reponse graduee basee principalement sur le WR 7 jours."""
+        """
+        Fonction lineaire continue : modifier = f(win_rate).
+        Sous 50% WR: penalite progressive (slope 0.6)
+        Au-dessus 50% WR: bonus progressif (slope 0.33)
+        Pondere par confiance (sample / 15).
+        Range: -20 a +10.
+        """
         if sample < MIN_TRADES_FOR_MODIFIER:
             return 0
 
         # Utiliser principalement le WR 7d pour etre reactif
         wr = wr_7d if wr_7d > 0 else wr_30d
 
-        if wr < 30 and sample >= 8:
-            return -15  # Penalite forte
-        elif wr < 40:
-            return -8   # Malus
-        elif wr > 65:
-            return 5    # Bonus
-        return 0
+        if wr <= 50:
+            modifier = (wr - 50) * 0.6   # -30 a 0
+        else:
+            modifier = (wr - 50) * 0.33   # 0 a +16.5
+
+        # Ponderer par confiance basee sur l'echantillon
+        confidence = min(1.0, sample / 15)
+        modifier *= confidence
+
+        return max(MODIFIER_CAP_MIN, min(MODIFIER_CAP_MAX, round(modifier, 1)))
 
     async def get_edge_decay_alerts(self) -> list[dict]:
         """Detecte les dimensions dont le WR 7j chute vs WR 30j (edge decay)."""

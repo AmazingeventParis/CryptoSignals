@@ -109,6 +109,16 @@ def detect_retest(indicators: dict, df, direction_bias: str) -> dict | None:
     if total_range == 0:
         return None
 
+    # VWAP proximity check (S/R dynamique)
+    vwap = _safe_val(indicators.get("last_vwap"), 0)
+    vwap_bonus = 0
+    vwap_confirmation = ""
+    if vwap > 0 and price > 0:
+        vwap_distance_pct = abs(price - vwap) / vwap * 100
+        if vwap_distance_pct <= 0.2:
+            vwap_bonus = 5
+            vwap_confirmation = " + VWAP S/R"
+
     # Confirmation Stoch RSI
     stoch_k = _safe_val(indicators.get("last_stoch_k"), 50)
     stoch_confirmation = ""
@@ -132,9 +142,9 @@ def detect_retest(indicators: dict, df, direction_bias: str) -> dict | None:
                     "type": "retest",
                     "direction": "long",
                     "entry_price": price,
-                    "pattern_score": 20 + stoch_bonus,
+                    "pattern_score": 20 + stoch_bonus + vwap_bonus,
                     "vol_score": min(20, int(indicators.get("last_volume_ratio", 0) * 10)),
-                    "reason": f"Retest support {recent_low:.6f} avec rejection{stoch_confirmation}",
+                    "reason": f"Retest support {recent_low:.6f} avec rejection{stoch_confirmation}{vwap_confirmation}",
                     "key_level": recent_low,
                 }
 
@@ -156,9 +166,9 @@ def detect_retest(indicators: dict, df, direction_bias: str) -> dict | None:
                     "type": "retest",
                     "direction": "short",
                     "entry_price": price,
-                    "pattern_score": 20 + stoch_bonus,
+                    "pattern_score": 20 + stoch_bonus + vwap_bonus,
                     "vol_score": min(20, int(indicators.get("last_volume_ratio", 0) * 10)),
-                    "reason": f"Retest resistance {recent_high:.6f} avec rejection{stoch_confirmation}",
+                    "reason": f"Retest resistance {recent_high:.6f} avec rejection{stoch_confirmation}{vwap_confirmation}",
                     "key_level": recent_high,
                 }
 
@@ -216,6 +226,16 @@ def detect_ema_bounce(indicators: dict, direction_bias: str) -> dict | None:
     engulfing = indicators.get("engulfing", "none")
     pin_bar = indicators.get("pin_bar", "none")
 
+    # VWAP proximity bonus for EMA bounce
+    vwap = _safe_val(indicators.get("last_vwap"), 0)
+    vwap_ema_bonus = 0
+    vwap_ema_confirmation = ""
+    if vwap > 0 and price > 0:
+        vwap_dist = abs(price - vwap) / vwap * 100
+        if vwap_dist <= 0.3:
+            vwap_ema_bonus = 3
+            vwap_ema_confirmation = " + VWAP proche"
+
     # Confirmation Ichimoku Cloud
     ichimoku = indicators.get("ichimoku")
     cloud_confirmation = ""
@@ -244,9 +264,9 @@ def detect_ema_bounce(indicators: dict, direction_bias: str) -> dict | None:
                 "type": "ema_bounce",
                 "direction": "long",
                 "entry_price": price,
-                "pattern_score": 25 + cloud_bonus,
+                "pattern_score": 25 + cloud_bonus + vwap_ema_bonus,
                 "vol_score": min(20, int(indicators.get("last_volume_ratio", 0) * 10)),
-                "reason": f"Bounce EMA20 haussier ({signal_type}, dist={distance_pct:.3f}%){cloud_confirmation}",
+                "reason": f"Bounce EMA20 haussier ({signal_type}, dist={distance_pct:.3f}%){cloud_confirmation}{vwap_ema_confirmation}",
             }
 
     # Bounce baissier
@@ -257,9 +277,9 @@ def detect_ema_bounce(indicators: dict, direction_bias: str) -> dict | None:
                 "type": "ema_bounce",
                 "direction": "short",
                 "entry_price": price,
-                "pattern_score": 25 + cloud_bonus,
+                "pattern_score": 25 + cloud_bonus + vwap_ema_bonus,
                 "vol_score": min(20, int(indicators.get("last_volume_ratio", 0) * 10)),
-                "reason": f"Bounce EMA20 baissier ({signal_type}, dist={distance_pct:.3f}%){cloud_confirmation}",
+                "reason": f"Bounce EMA20 baissier ({signal_type}, dist={distance_pct:.3f}%){cloud_confirmation}{vwap_ema_confirmation}",
             }
 
     return None

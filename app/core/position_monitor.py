@@ -117,6 +117,7 @@ class PositionMonitor:
             pos_data["_indicator_snapshot"] = signal.get("_indicator_snapshot", {})
             pos_data["_regime_snapshot"] = signal.get("_regime_snapshot", {})
             pos_data["_scores_snapshot"] = signal.get("_scores_snapshot", {})
+            pos_data["_candle_pattern"] = signal.get("candle_pattern", "none")
 
         pos_id = await insert_active_position(pos_data)
         pos_data["id"] = pos_id
@@ -318,7 +319,8 @@ class PositionMonitor:
                 existing = self._positions.get(pos["id"])
                 if existing:
                     for key in ("_max_profit_usd", "_max_drawdown_usd", "_original_sl",
-                                "_entry_atr", "_indicator_snapshot", "_regime_snapshot", "_scores_snapshot"):
+                                "_entry_atr", "_indicator_snapshot", "_regime_snapshot", "_scores_snapshot",
+                                "_candle_pattern"):
                         if key in existing:
                             pos[key] = existing[key]
             self._positions[pos["id"]] = pos
@@ -445,6 +447,48 @@ class PositionMonitor:
 
     async def _handle_tp3_hit(self, pos: dict):
         symbol = pos["symbol"]
+
+        # V4: Trailing TP after TP3 - close partial and trail remainder
+        trailing_cfg = self.settings.get("trailing_tp", {}) if self.settings else {}
+        if self.bot_version == "V4" and trailing_cfg.get("enabled"):
+            tp3_close_pct = trailing_cfg.get("tp3_close_pct", 50)
+            trail_atr = trailing_cfg.get("trail_atr", 1.0)
+
+            logger.info(f"[{self.bot_version}] TP3 HIT {symbol} - closing {tp3_close_pct}%, trailing remainder")
+
+            # Close partial
+            close_qty = round(pos["remaining_quantity"] * tp3_close_pct / 100, 6)
+            trail_qty = round(pos["remaining_quantity"] - close_qty, 6)
+
+            if trail_qty > 0:
+                # Set trailing stop at current price - ATR
+                entry_atr = pos.get("_entry_atr", 0)
+                trail_distance = entry_atr * trail_atr if entry_atr > 0 else abs(pos["tp3"] - pos["entry_price"]) * 0.3
+
+                if pos["direction"] == "long":
+                    trail_sl = round(pos["tp3"] - trail_distance, 8)
+                else:
+                    trail_sl = round(pos["tp3"] + trail_distance, 8)
+
+                await update_position(pos["id"], {
+                    "tp3_hit": 1,
+                    "remaining_quantity": trail_qty,
+                    "stop_loss": trail_sl,
+                    "state": "trailing_tp",
+                })
+                pos["tp3_hit"] = 1
+                pos["remaining_quantity"] = trail_qty
+                pos["stop_loss"] = trail_sl
+                pos["state"] = "trailing_tp"
+
+                logger.info(f"[{self.bot_version}] Trailing TP: {symbol} trail_sl={trail_sl}, qty={trail_qty}")
+                await send_trade_update(
+                    symbol, "tp3_hit",
+                    f"TP3 touche ! {tp3_close_pct}% ferme, trailing le reste\nTrail SL: {trail_sl}"
+                )
+                return
+
+        # Default behavior: close 100%
         logger.info(f"[{self.bot_version}] TP3 HIT {symbol} - position fermee")
 
         await update_position(pos["id"], {"tp3_hit": 1})
@@ -617,7 +661,16 @@ class PositionMonitor:
         if elapsed < max_hold:
             return False
 
-        # Ferme seulement si PnL < $0.05 (stagnant)
+        # V4: Adjust stale threshold to account for fees
+        if self.bot_version == "V4" and self.settings:
+            taker_pct = self.settings.get("fees", {}).get("taker_pct", 0)
+            position_size = pos.get("position_size_usd", 0)
+            min_exit_profit = position_size * (taker_pct / 100) * 2  # fees aller-retour
+            if current_pnl < min_exit_profit:
+                return True
+            return False
+
+        # Default: close if PnL < $0.05 (stagnant)
         if current_pnl < 0.05:
             return True
         return False
@@ -701,6 +754,20 @@ class PositionMonitor:
 
     async def _close_and_journal(self, pos: dict, close_reason: str, exit_price: float, pnl_usd: float):
         now = datetime.utcnow().isoformat()
+
+        # V4: Deduire les frais de commission (taker fee aller-retour)
+        fees_usd = 0.0
+        if self.bot_version == "V4" and self.settings:
+            taker_pct = self.settings.get("fees", {}).get("taker_pct", 0)
+            if taker_pct > 0:
+                position_size = pos.get("position_size_usd", 0)
+                fees_usd = position_size * (taker_pct / 100) * 2  # aller + retour
+                pnl_usd -= fees_usd
+                logger.info(
+                    f"[{self.bot_version}] Fees deducted: ${fees_usd:.4f} "
+                    f"(position ${position_size:.2f} x {taker_pct}% x2)"
+                )
+
         pnl_pct = (pnl_usd / pos["margin_required"]) * 100 if pos.get("margin_required") else 0
         result = "win" if pnl_usd > 0 else "loss"
 
@@ -783,6 +850,7 @@ class PositionMonitor:
                         "trade_id": None,
                         "signal_id": pos.get("signal_id"),
                         "bot_version": self.bot_version,
+                        "candle_pattern": pos.get("_candle_pattern", "none"),
                         "final_score": scores.get("final_score"),
                         "tradeability_score": scores.get("tradeability_score"),
                         "direction_score": scores.get("direction_score"),

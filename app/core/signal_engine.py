@@ -77,7 +77,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
         bid_depth=orderbook.get("bid_depth", 0),
         ask_depth=orderbook.get("ask_depth", 0),
         funding_rate=market_data_dict.get("funding_rate", 0),
-        oi_change_pct=0,
+        oi_change_pct=market_data_dict.get("oi_change_pct", 0),
         mode=mode,
         adx_val=adx_val,
         settings=s,
@@ -201,13 +201,30 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
     setup_score = entry["pattern_score"] + entry["vol_score"] + rr_score + entry.get("confluence_score", 0)
     setup_score = min(100, max(0, setup_score + candle_modifier))
 
-    # V4 ONLY: Regime modifier sur le setup_score
+    # V4 ONLY: Regime modifier sur le setup_score + VWAP confluence
     regime_mod = 0
     mtf_modifier = 0
+    vwap_modifier = 0
     if is_v4:
-        regime_mod = regime_score_modifier(market_regime, entry["type"])
+        regime_mod = regime_score_modifier(market_regime, entry["type"], regime_info.get("confidence", 0))
         setup_score = max(0, min(100, setup_score + regime_mod))
         mtf_modifier = int(mtf_confluence)
+
+        # VWAP confluence: LONG above VWAP = +5, LONG far below = -5
+        vwap_val = _safe_val(indicators_analysis.get("last_vwap"), 0)
+        last_close = _safe_val(indicators_analysis.get("last_close"), 0)
+        if vwap_val > 0 and last_close > 0:
+            vwap_dist_pct = (last_close - vwap_val) / vwap_val * 100
+            if entry["direction"] == "long":
+                if vwap_dist_pct > 0.1:
+                    vwap_modifier = 5   # LONG above VWAP
+                elif vwap_dist_pct < -0.5:
+                    vwap_modifier = -5  # LONG far below VWAP
+            else:  # short
+                if vwap_dist_pct < -0.1:
+                    vwap_modifier = 5   # SHORT below VWAP
+                elif vwap_dist_pct > 0.5:
+                    vwap_modifier = -5  # SHORT far above VWAP
 
     if entry["direction"] == "long":
         sentiment_normalized = (sentiment_score + 100) / 2
@@ -215,21 +232,47 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
         sentiment_normalized = (-sentiment_score + 100) / 2
 
     weights = scoring["weights"]
+
+    # V4: Mode-specific weights (reduce sentiment for scalping)
+    if is_v4 and mode == "scalping":
+        w_trade = 0.35
+        w_dir = 0.30
+        w_setup = 0.30
+        w_sent = 0.05
+    elif is_v4 and mode == "swing":
+        w_trade = 0.30
+        w_dir = 0.25
+        w_setup = 0.25
+        w_sent = 0.20
+    else:
+        w_trade = weights.get("tradeability", 0.30)
+        w_dir = weights.get("direction", 0.25)
+        w_setup = weights.get("setup", 0.25)
+        w_sent = weights.get("sentiment", 0.20)
+
     final_score = int(
-        tradeability["score"] * 100 * weights.get("tradeability", 0.30)
-        + direction_score * weights.get("direction", 0.25)
-        + setup_score * weights.get("setup", 0.25)
-        + sentiment_normalized * weights.get("sentiment", 0.20)
+        tradeability["score"] * 100 * w_trade
+        + direction_score * w_dir
+        + setup_score * w_setup
+        + sentiment_normalized * w_sent
     )
 
-    # V4 ONLY: MTF + Learning modifiers
+    # V4 ONLY: MTF + VWAP + Learning modifiers
     learning_modifier = 0
     learning_reasons = []
+    _candle_pattern = "none"
     if is_v4:
-        final_score += mtf_modifier
+        final_score += mtf_modifier + vwap_modifier
         adaptive_learner = _get_adaptive_learner("V4")
         if adaptive_learner:
             now = datetime.utcnow()
+            # Detect confirmed candle pattern for learning
+            _candle_pattern = "none"
+            for pat_name in ("engulfing", "hammer", "shooting_star", "pin_bar", "doji"):
+                pat_val = indicators_analysis.get(pat_name, "none")
+                if pat_val != "none":
+                    _candle_pattern = pat_name
+                    break
             signal_ctx = {
                 "setup_type": entry["type"],
                 "symbol": symbol,
@@ -239,7 +282,15 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
                 "score": final_score,
                 "direction": entry["direction"],
                 "mtf_confluence": mtf_confluence,
+                "candle_pattern": _candle_pattern,
             }
+            # Check edge decay suppression
+            if adaptive_learner.is_signal_suppressed(signal_ctx):
+                return _no_trade(
+                    symbol, mode,
+                    "Signal supprime: trop de dimensions en edge decay",
+                    direction["signals"], tradeability["score"]
+                )
             learning_modifier, learning_reasons = adaptive_learner.get_total_modifier(signal_ctx)
             final_score += learning_modifier
 
@@ -268,6 +319,8 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
         reasons.append(f"Regime {market_regime} {regime_mod:+d}pts")
     if mtf_modifier != 0:
         reasons.append(f"MTF confluence {mtf_modifier:+d}pts")
+    if vwap_modifier != 0:
+        reasons.append(f"VWAP confluence {vwap_modifier:+d}pts")
     if learning_modifier != 0:
         reasons.append(f"Learning {learning_modifier:+d}pts")
 
@@ -329,6 +382,8 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
             "regime_confidence": regime_info.get("confidence", 0),
             "mtf_confluence": mtf_confluence,
             "learning_modifier": learning_modifier,
+            "candle_pattern": _candle_pattern,
+            "vwap_modifier": vwap_modifier,
             "_entry_atr": _safe_val(atr_current),
             "_indicator_snapshot": _indicator_snapshot,
             "_regime_snapshot": regime_info,
@@ -366,33 +421,46 @@ def _no_trade(
 
 def _compute_mtf_confluence(indicators_analysis: dict, indicators_filter: dict) -> float:
     """
-    Compare la structure et le RSI du TF analyse vs TF filtre.
-    Retourne un score de -10 a +10.
+    Compare la structure, RSI et ADX du TF analyse vs TF filtre.
+    Retourne un score gradue de -15 a +15.
     """
     score = 0.0
 
-    # Structure alignment
+    # Structure alignment (0 a ±7 pts selon force HH/HL count)
     struct_analysis = indicators_analysis.get("structure")
     struct_filter = indicators_filter.get("structure")
     if struct_analysis and struct_filter:
         if struct_analysis.trend == struct_filter.trend and struct_analysis.trend != "neutral":
-            score += 5  # Aligned trending
+            # Aligned: score based on strength
+            strength = getattr(struct_filter, "strength", 1)
+            score += min(7, 3 + strength * 2)  # 3 a 7 pts
         elif struct_analysis.trend != "neutral" and struct_filter.trend != "neutral" and struct_analysis.trend != struct_filter.trend:
-            score -= 5  # Conflicting trends
+            score -= 7  # Conflicting trends
 
-    # RSI alignment
+    # RSI alignment: scoring continu normalise (0 a ±5 pts)
     rsi_analysis = _safe_val(indicators_analysis.get("last_rsi"), 50)
     rsi_filter = _safe_val(indicators_filter.get("last_rsi"), 50)
-    both_bullish = rsi_analysis > 55 and rsi_filter > 55
-    both_bearish = rsi_analysis < 45 and rsi_filter < 45
-    conflicting = (rsi_analysis > 60 and rsi_filter < 40) or (rsi_analysis < 40 and rsi_filter > 60)
+    rsi_product = (rsi_analysis - 50) * (rsi_filter - 50)
+    if rsi_product > 0:
+        # Same side: scale 0 to 5
+        rsi_score = min(5, abs(rsi_product) / 200)
+        score += rsi_score
+    elif rsi_product < -100:
+        # Conflicting: scale 0 to -5
+        rsi_score = min(5, abs(rsi_product) / 200)
+        score -= rsi_score
 
-    if both_bullish or both_bearish:
-        score += 5
-    elif conflicting:
-        score -= 5
+    # ADX alignment: both trending or ranging (±3 pts)
+    adx_analysis = _safe_val(indicators_analysis.get("last_adx"), 20)
+    adx_filter = _safe_val(indicators_filter.get("last_adx"), 20)
+    both_trending = adx_analysis >= 25 and adx_filter >= 25
+    both_ranging = adx_analysis < 20 and adx_filter < 20
+    if both_trending:
+        score += 3
+    elif both_ranging:
+        score -= 2
 
-    return max(-10, min(10, score))
+    return max(-15, min(15, round(score, 1)))
 
 
 # Registry for adaptive learners (set from main.py)

@@ -69,17 +69,24 @@ def detect_regime(indicators: dict) -> dict:
     }
 
 
-def regime_score_modifier(regime: str, setup_type: str) -> int:
+def regime_score_modifier(regime: str, setup_type: str, confidence: float = 1.0) -> int:
     """
-    Retourne un modificateur de score basé sur le regime et le setup.
+    Retourne un modificateur de score pondere par la confiance du regime.
+    Base modifiers etendus, multiplies par la confiance de detection.
     """
+    base = 0
+
     if regime == "volatile":
-        return -10
+        base = -15
+    elif regime == "ranging":
+        if setup_type == "breakout":
+            base = -12
+        elif setup_type == "retest":
+            base = 5
+    elif regime == "trending":
+        if setup_type in ("breakout", "momentum"):
+            base = 8
+        elif setup_type == "retest":
+            base = 3
 
-    if regime == "ranging" and setup_type == "breakout":
-        return -10
-
-    if regime == "trending" and setup_type in ("breakout", "momentum"):
-        return 5
-
-    return 0
+    return int(base * min(1.0, max(0.1, confidence)))

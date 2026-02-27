@@ -53,6 +53,48 @@ class Scanner:
         pairs = get_enabled_pairs(self.settings)
         modes = self.settings["scanner"]["modes"]
 
+        # V4: Parallel data fetch for all pairs
+        if self.name == "V4":
+            await self._scan_cycle_parallel(pairs, modes)
+        else:
+            await self._scan_cycle_sequential(pairs, modes)
+
+    async def _scan_cycle_parallel(self, pairs: list[str], modes: list[str]):
+        """V4 only: Fetch all data in batch then analyze in parallel."""
+        # Collect all needed timeframes
+        all_tfs_set = set()
+        for mode in modes:
+            mode_cfg = get_mode_config(mode, self.settings)
+            tfs = mode_cfg["timeframes"]["analysis"] + [mode_cfg["timeframes"]["filter"]]
+            all_tfs_set.update(tfs)
+
+        # Phase 1: Batch fetch all data
+        all_data = await market_data.fetch_all_data_batch(pairs, list(all_tfs_set))
+
+        # Phase 2: Analyze all pairs x modes in parallel
+        async def _analyze_one(symbol: str, mode: str, data: dict):
+            key = f"{symbol}_{mode}"
+            if key in self.cooldowns and datetime.utcnow() < self.cooldowns[key]:
+                return
+            try:
+                result = await analyze_pair(symbol, data, mode, settings=self.settings)
+                await self._process_signal_result(symbol, mode, key, result)
+            except Exception as e:
+                logger.error(f"[{self.name}] Erreur analyse {symbol} {mode}: {e}", exc_info=True)
+
+        tasks = []
+        for symbol in pairs:
+            data = all_data.get(symbol)
+            if not data:
+                continue
+            for mode in modes:
+                tasks.append(_analyze_one(symbol, mode, data))
+
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    async def _scan_cycle_sequential(self, pairs: list[str], modes: list[str]):
+        """Original sequential scan for V1/V2/V3."""
         for symbol in pairs:
             for mode in modes:
                 try:
@@ -68,56 +110,59 @@ class Scanner:
                     data = await market_data.fetch_all_data(symbol, all_tfs)
 
                     result = await analyze_pair(symbol, data, mode, settings=self.settings)
-
-                    if result["type"] == "signal":
-                        if self._is_duplicate_signal(key, result):
-                            continue
-
-                        if self._has_active_position(symbol):
-                            logger.debug(f"[{self.name}] Signal {symbol} ignore: position deja ouverte")
-                            continue
-
-                        if self._has_recent_signal(symbol):
-                            logger.debug(f"[{self.name}] Signal {symbol} ignore: cooldown anti flip-flop")
-                            continue
-
-                        # Ajouter bot_version au signal
-                        result["bot_version"] = self.name
-
-                        signal_id = await insert_signal(result)
-                        result["id"] = signal_id
-                        self.last_signals[key] = result
-                        self._signal_timestamps[symbol] = datetime.utcnow()
-
-                        logger.info(
-                            f"[{self.name}] SIGNAL {result['direction'].upper()} {symbol} [{mode}] "
-                            f"score={result['score']} entry={result['entry_price']}"
-                        )
-
-                        # AUTO-EXECUTE en paper trading
-                        try:
-                            if self._paper_trader:
-                                executed = await self._paper_trader.auto_execute(result)
-                                if executed:
-                                    from app.database import update_signal_status
-                                    await update_signal_status(signal_id, "executed")
-                                    logger.info(f"[{self.name}] AUTO-TRADE: {result['direction'].upper()} {symbol} execute")
-                        except Exception as e:
-                            logger.error(f"[{self.name}] Erreur auto-execute: {e}")
-
-                    else:
-                        await log_tradeability(
-                            symbol,
-                            result.get("tradeability_score", 0),
-                            False,
-                            {"reason": result.get("reason", ""), "details": result.get("details", [])},
-                            bot_version=self.name,
-                        )
+                    await self._process_signal_result(symbol, mode, key, result)
 
                 except Exception as e:
                     logger.error(f"[{self.name}] Erreur analyse {symbol} {mode}: {e}", exc_info=True)
 
                 await asyncio.sleep(1)
+
+    async def _process_signal_result(self, symbol: str, mode: str, key: str, result: dict):
+        """Process a signal result (shared between sequential and parallel)."""
+        if result["type"] == "signal":
+            if self._is_duplicate_signal(key, result):
+                return
+
+            if self._has_active_position(symbol):
+                logger.debug(f"[{self.name}] Signal {symbol} ignore: position deja ouverte")
+                return
+
+            if self._has_recent_signal(symbol):
+                logger.debug(f"[{self.name}] Signal {symbol} ignore: cooldown anti flip-flop")
+                return
+
+            # Ajouter bot_version au signal
+            result["bot_version"] = self.name
+
+            signal_id = await insert_signal(result)
+            result["id"] = signal_id
+            self.last_signals[key] = result
+            self._signal_timestamps[symbol] = datetime.utcnow()
+
+            logger.info(
+                f"[{self.name}] SIGNAL {result['direction'].upper()} {symbol} [{mode}] "
+                f"score={result['score']} entry={result['entry_price']}"
+            )
+
+            # AUTO-EXECUTE en paper trading
+            try:
+                if self._paper_trader:
+                    executed = await self._paper_trader.auto_execute(result)
+                    if executed:
+                        from app.database import update_signal_status
+                        await update_signal_status(signal_id, "executed")
+                        logger.info(f"[{self.name}] AUTO-TRADE: {result['direction'].upper()} {symbol} execute")
+            except Exception as e:
+                logger.error(f"[{self.name}] Erreur auto-execute: {e}")
+
+        else:
+            await log_tradeability(
+                symbol,
+                result.get("tradeability_score", 0),
+                False,
+                {"reason": result.get("reason", ""), "details": result.get("details", [])},
+                bot_version=self.name,
+            )
 
     @property
     def _paper_trader(self):

@@ -15,9 +15,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import websockets
 
-from app.config import SETTINGS, SETTINGS_V1, SETTINGS_V2, SETTINGS_V3, SETTINGS_V4, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID
+from app.config import SETTINGS, SETTINGS_V1, SETTINGS_V2, SETTINGS_V3, SETTINGS_V4, LOG_LEVEL, BASE_DIR, TELEGRAM_CHAT_ID, get_enabled_pairs
 from app.core.adaptive_learner import AdaptiveLearner
 from app.core.signal_engine import register_adaptive_learner
+from app.core.correlation import CorrelationGuard
+from app.core.order_flow import OrderFlowTracker
 
 # Auth config
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
@@ -76,13 +78,19 @@ scanner_v3.set_position_monitor(position_monitor_v3)
 scanner_v4.set_position_monitor(position_monitor_v4)
 # V4 only: wire adaptive learner
 position_monitor_v4.set_adaptive_learner(adaptive_learner_v4)
+# V4 only: correlation guard
+correlation_guard_v4 = CorrelationGuard()
+paper_trader_v4.set_correlation_guard(correlation_guard_v4)
+# V4 only: order flow tracker
+v4_pairs = get_enabled_pairs(SETTINGS_V4)
+order_flow_v4 = OrderFlowTracker(v4_pairs)
 
 # Export pour routes.py
 bot_instances = {
     "V1": {"scanner": scanner_v1, "paper_trader": paper_trader_v1, "position_monitor": position_monitor_v1},
     "V2": {"scanner": scanner_v2, "paper_trader": paper_trader_v2, "position_monitor": position_monitor_v2},
     "V3": {"scanner": scanner_v3, "paper_trader": paper_trader_v3, "position_monitor": position_monitor_v3},
-    "V4": {"scanner": scanner_v4, "paper_trader": paper_trader_v4, "position_monitor": position_monitor_v4, "adaptive_learner": adaptive_learner_v4},
+    "V4": {"scanner": scanner_v4, "paper_trader": paper_trader_v4, "position_monitor": position_monitor_v4, "adaptive_learner": adaptive_learner_v4, "correlation_guard": correlation_guard_v4, "order_flow": order_flow_v4},
 }
 
 
@@ -124,6 +132,10 @@ async def lifespan(app: FastAPI):
     monitor_v4_task = asyncio.create_task(position_monitor_v4.start())
     logger.info("Position Monitors V1+V2+V3+V4 lances en arriere-plan")
 
+    # V4 only: Start order flow tracker
+    order_flow_task = asyncio.create_task(order_flow_v4.start())
+    logger.info("Order Flow Tracker V4 lance en arriere-plan")
+
     yield
 
     # Shutdown
@@ -144,6 +156,8 @@ async def lifespan(app: FastAPI):
     monitor_v2_task.cancel()
     monitor_v3_task.cancel()
     monitor_v4_task.cancel()
+    await order_flow_v4.stop()
+    order_flow_task.cancel()
     await market_data.close()
 
 
@@ -249,7 +263,7 @@ async def dashboard():
 async def health():
     return {
         "status": "ok",
-        "version": "2026-02-27-v71",
+        "version": "2026-02-27-v73",
         "scanner_v1_running": scanner_v1.running,
         "scanner_v2_running": scanner_v2.running,
         "scanner_v3_running": scanner_v3.running,

@@ -180,6 +180,8 @@ CREATE TABLE IF NOT EXISTS trade_context (
     max_drawdown_usd REAL DEFAULT 0,
     max_profit_pct REAL DEFAULT 0,
     max_drawdown_pct REAL DEFAULT 0,
+    -- Candle pattern
+    candle_pattern TEXT DEFAULT 'none',
     -- Resultat
     pnl_usd REAL,
     pnl_pct REAL,
@@ -206,6 +208,12 @@ CREATE TABLE IF NOT EXISTS learning_weights (
     last_updated TEXT,
     UNIQUE(dimension, dimension_value, bot_version)
 );
+
+-- Performance indexes for learning queries
+CREATE INDEX IF NOT EXISTS idx_tc_bot_exit ON trade_context(bot_version, exit_time);
+CREATE INDEX IF NOT EXISTS idx_lw_bot ON learning_weights(bot_version);
+CREATE INDEX IF NOT EXISTS idx_tj_bot_exit ON trades_journal(bot_version, exit_time);
+CREATE INDEX IF NOT EXISTS idx_ap_bot_state ON active_positions(bot_version, state);
 """
 
 # Migration: ajouter bot_version aux tables existantes
@@ -215,6 +223,7 @@ MIGRATION_ADD_BOT_VERSION = [
     "ALTER TABLE tradeability_log ADD COLUMN bot_version TEXT DEFAULT 'V2'",
     "ALTER TABLE active_positions ADD COLUMN bot_version TEXT DEFAULT 'V2'",
     "ALTER TABLE paper_portfolio ADD COLUMN bot_version TEXT DEFAULT 'V2'",
+    "ALTER TABLE trade_context ADD COLUMN candle_pattern TEXT DEFAULT 'none'",
 ]
 
 
@@ -673,10 +682,11 @@ async def insert_trade_context(ctx: dict):
              funding_rate, spread_pct,
              market_regime, regime_confidence, setup_type, symbol, mode, direction,
              mtf_confluence, hour_utc, day_of_week,
+             candle_pattern,
              max_profit_usd, max_drawdown_usd, max_profit_pct, max_drawdown_pct,
              pnl_usd, pnl_pct, result, close_reason, duration_seconds,
              entry_time, exit_time)
-            VALUES (?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?,?,?,?, ?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?)""",
+            VALUES (?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?,?,?,?, ?,?,?, ?, ?,?,?,?, ?,?,?,?,?, ?,?)""",
             (
                 ctx.get("trade_id"), ctx.get("signal_id"), ctx.get("bot_version", "V2"),
                 ctx.get("final_score"), ctx.get("tradeability_score"),
@@ -689,6 +699,7 @@ async def insert_trade_context(ctx: dict):
                 ctx.get("market_regime"), ctx.get("regime_confidence"),
                 ctx.get("setup_type"), ctx.get("symbol"), ctx.get("mode"), ctx.get("direction"),
                 ctx.get("mtf_confluence"), ctx.get("hour_utc"), ctx.get("day_of_week"),
+                ctx.get("candle_pattern", "none"),
                 ctx.get("max_profit_usd", 0), ctx.get("max_drawdown_usd", 0),
                 ctx.get("max_profit_pct", 0), ctx.get("max_drawdown_pct", 0),
                 ctx.get("pnl_usd"), ctx.get("pnl_pct"), ctx.get("result"),

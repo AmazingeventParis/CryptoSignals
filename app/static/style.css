@@ -833,3 +833,39 @@ body {
 .histo-no-trades {
     color: var(--text-secondary); font-size: 12px; text-align: center; padding: 20px 0;
 }
+
+/* V4 Learning Panel */
+.learning-panel {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; margin-bottom: 16px;
+}
+.learning-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+}
+.learning-section h4 {
+    font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; text-transform: uppercase;
+}
+.calibration-grid, .weights-grid, .advanced-stats-grid {
+    display: flex; flex-direction: column; gap: 4px;
+}
+.cal-row, .weight-row, .adv-stat-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; padding: 4px 8px; background: var(--surface); border-radius: 4px;
+}
+.cal-row .score-range { font-weight: 600; }
+.cal-row .wr { font-family: monospace; }
+.weight-row .dim { color: var(--text-secondary); }
+.weight-row .mod { font-weight: 700; font-family: monospace; }
+.weight-row .mod.positive { color: var(--green); }
+.weight-row .mod.negative { color: var(--red); }
+.edge-decay-list { display: flex; flex-direction: column; gap: 4px; }
+.decay-alert {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; padding: 4px 8px; border-radius: 4px;
+}
+.decay-alert.severe { background: rgba(248,81,73,0.15); border: 1px solid rgba(248,81,73,0.3); }
+.decay-alert.warning { background: rgba(210,153,34,0.15); border: 1px solid rgba(210,153,34,0.3); }
+.decay-alert .drop { font-weight: 700; font-family: monospace; color: var(--red); }
+@media (max-width: 768px) {
+    .learning-grid { grid-template-columns: 1fr; }
+}

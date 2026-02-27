@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=72">
+    <link rel="stylesheet" href="/static/style.css?v=73">
 </head>
 <body>
     <div id="app">
@@ -177,6 +177,28 @@
             <!-- V4 Tab -->
             <div id="tab-v4" class="tab-content">
                 <div id="v4-positions-live" class="positions-live"></div>
+                <!-- V4 Learning Panel -->
+                <div id="v4-learning-panel" class="learning-panel">
+                    <h3 style="margin:0 0 12px 0;font-size:14px">Apprentissage Adaptatif</h3>
+                    <div class="learning-grid">
+                        <div class="learning-section">
+                            <h4>Calibration Score</h4>
+                            <div id="v4-calibration" class="calibration-grid"></div>
+                        </div>
+                        <div class="learning-section">
+                            <h4>Edge Decay Alerts</h4>
+                            <div id="v4-edge-decay" class="edge-decay-list"></div>
+                        </div>
+                        <div class="learning-section">
+                            <h4>Top Poids Appris</h4>
+                            <div id="v4-weights-top" class="weights-grid"></div>
+                        </div>
+                    </div>
+                    <div class="learning-section" style="margin-top:12px">
+                        <h4>Metriques Avancees</h4>
+                        <div id="v4-advanced-stats" class="advanced-stats-grid"></div>
+                    </div>
+                </div>
                 <div id="v4-signals-list" class="signals-list">
                     <div class="empty-state">Chargement des signaux V4...</div>
                 </div>
@@ -262,10 +284,15 @@
                     <div class="compare-col compare-v4">
                         <div class="compare-col-header"><span class="v4-badge">V4</span> Bot V4 (adaptive)</div>
                         <div class="compare-stat"><span class="label">Balance</span><span id="comp-v4-balance" class="value">$100</span></div>
-                        <div class="compare-stat"><span class="label">P&L</span><span id="comp-v4-pnl" class="value">$0</span></div>
+                        <div class="compare-stat"><span class="label">P&L brut</span><span id="comp-v4-pnl" class="value">$0</span></div>
+                        <div class="compare-stat"><span class="label">Frais</span><span id="comp-v4-fees" class="value">$0</span></div>
                         <div class="compare-stat"><span class="label">Trades</span><span id="comp-v4-trades" class="value">0</span></div>
                         <div class="compare-stat"><span class="label">Win Rate</span><span id="comp-v4-winrate" class="value">0%</span></div>
                         <div class="compare-stat"><span class="label">Gagnes / Perdus</span><span id="comp-v4-wl" class="value">0 / 0</span></div>
+                        <div class="compare-stat"><span class="label">Profit Factor</span><span id="comp-v4-pf" class="value">--</span></div>
+                        <div class="compare-stat"><span class="label">Sharpe</span><span id="comp-v4-sharpe" class="value">--</span></div>
+                        <div class="compare-stat"><span class="label">Max DD</span><span id="comp-v4-maxdd" class="value">--</span></div>
+                        <div class="compare-stat"><span class="label">Streak W/L</span><span id="comp-v4-streak" class="value">-- / --</span></div>
                     </div>
                     <div class="compare-col compare-ft">
                         <div class="compare-col-header"><span class="ft-badge">FT</span> Freqtrade</div>
@@ -368,6 +395,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=72"></script>
+    <script src="/static/app.js?v=73"></script>
 </body>
 </html>

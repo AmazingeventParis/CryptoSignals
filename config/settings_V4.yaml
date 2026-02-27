@@ -23,6 +23,18 @@ pairs:
     enabled: true
   - symbol: "TRUMP/USDT:USDT"
     enabled: true
+  - symbol: "AVAX/USDT:USDT"
+    enabled: true
+  - symbol: "LINK/USDT:USDT"
+    enabled: true
+  - symbol: "NEAR/USDT:USDT"
+    enabled: true
+  - symbol: "SUI/USDT:USDT"
+    enabled: true
+  - symbol: "ARB/USDT:USDT"
+    enabled: true
+  - symbol: "WIF/USDT:USDT"
+    enabled: true
 
 # --- Scanner ---
 scanner:
@@ -218,6 +230,28 @@ v4_features:
   stale_exit: true             # Fermeture positions stagnantes
   dynamic_sl: true             # Ajustement SL selon volatilite
   anti_correlation: true       # Garde max 3 positions meme direction
+
+# --- Frais de trading ---
+fees:
+  taker_pct: 0.06  # MEXC taker fee 0.06%
+
+# --- Position Sizing dynamique ---
+sizing:
+  base_pct: 8          # % du solde par trade
+  min_margin: 3         # marge minimum $
+  max_margin: 20        # marge maximum $
+
+# --- Trailing TP apres TP3 ---
+trailing_tp:
+  enabled: true
+  tp3_close_pct: 50     # fermer 50% a TP3
+  trail_atr: 1.0        # trail le reste a 1.0x ATR
+
+# --- Risk Limits ---
+risk_limits:
+  max_daily_loss_usd: 5.0
+  max_consecutive_losses: 5
+  pause_minutes: 60
 
 # --- Dashboard ---
 dashboard:

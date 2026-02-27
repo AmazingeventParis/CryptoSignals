@@ -12,6 +12,7 @@ class MarketData:
         self.exchange: ccxt.mexc = None
         self.exchange_private: ccxt.mexc = None
         self._cache: dict = {}
+        self._last_oi: dict[str, float] = {}  # symbol -> last OI value
 
     def is_connected(self) -> bool:
         return self.exchange is not None and self.exchange.markets is not None
@@ -138,6 +139,14 @@ class MarketData:
             logger.error(f"Erreur fetch_balance: {e}")
             return {"total": 0, "free": 0, "used": 0}
 
+    def get_oi_change_pct(self, symbol: str, current_oi: float) -> float:
+        """Calcule le % de changement de l'OI par rapport a la derniere valeur."""
+        prev_oi = self._last_oi.get(symbol, 0)
+        self._last_oi[symbol] = current_oi
+        if prev_oi <= 0 or current_oi <= 0:
+            return 0.0
+        return ((current_oi - prev_oi) / prev_oi) * 100
+
     async def fetch_all_data(self, symbol: str, timeframes: list[str]) -> dict:
         """Recupere toutes les donnees pour une paire et ses timeframes."""
         data = {
@@ -147,6 +156,7 @@ class MarketData:
             "orderbook": {},
             "funding_rate": 0.0,
             "open_interest": 0.0,
+            "oi_change_pct": 0.0,
             "ticker": {},
         }
 
@@ -156,8 +166,23 @@ class MarketData:
         data["orderbook"] = await self.fetch_orderbook(symbol)
         data["funding_rate"] = await self.fetch_funding_rate(symbol)
         data["open_interest"] = await self.fetch_open_interest(symbol)
+        data["oi_change_pct"] = self.get_oi_change_pct(symbol, data["open_interest"])
         data["ticker"] = await self.fetch_ticker(symbol)
 
+        return data
+
+    async def fetch_all_data_batch(self, symbols: list[str], timeframes: list[str]) -> dict[str, dict]:
+        """Recupere les donnees pour toutes les paires en parallele."""
+        import asyncio
+        tasks = {symbol: self.fetch_all_data(symbol, timeframes) for symbol in symbols}
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        data = {}
+        for symbol, result in zip(tasks.keys(), results):
+            if isinstance(result, Exception):
+                logger.error(f"Erreur fetch_all_data_batch {symbol}: {result}")
+                data[symbol] = None
+            else:
+                data[symbol] = result
         return data
 
 

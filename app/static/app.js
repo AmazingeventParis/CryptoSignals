@@ -56,6 +56,7 @@ async function refreshAll() {
         fetchTrades(),
         fetchLivePositions(),
         fetchFreqtradeData(),
+        fetchV4LearningPanel(),
     ]);
 }
 
@@ -2280,5 +2281,87 @@ async function loadHistorique() {
     } catch (e) {
         console.error('loadHistorique error:', e);
         container.innerHTML = '<div class="empty-state">Erreur de chargement</div>';
+    }
+}
+
+// --- V4 Learning Panel ---
+async function fetchV4LearningPanel() {
+    try {
+        const [calRes, decayRes, weightsRes, advRes] = await Promise.all([
+            fetch(`${API}/api/learning/calibration?bot_version=V4`).then(r => r.json()).catch(() => ({ calibration: [] })),
+            fetch(`${API}/api/learning/edge-decay?bot_version=V4`).then(r => r.json()).catch(() => ({ alerts: [] })),
+            fetch(`${API}/api/learning/weights?bot_version=V4`).then(r => r.json()).catch(() => ({ weights: [] })),
+            fetch(`${API}/api/stats/advanced?bot_version=V4`).then(r => r.json()).catch(() => ({})),
+        ]);
+
+        // Calibration
+        const calEl = document.getElementById('v4-calibration');
+        if (calEl) {
+            calEl.innerHTML = calRes.calibration.map(c => {
+                const wrColor = c.win_rate_7d >= 55 ? 'var(--green)' : c.win_rate_7d < 45 ? 'var(--red)' : 'var(--text)';
+                return `<div class="cal-row">
+                    <span class="score-range">${c.score_range}</span>
+                    <span class="wr" style="color:${wrColor}">${c.win_rate_7d.toFixed(0)}% 7j</span>
+                    <span class="wr">${c.win_rate_all.toFixed(0)}% all</span>
+                    <span style="color:var(--text-secondary)">(${c.sample_size})</span>
+                </div>`;
+            }).join('') || '<div style="color:var(--text-secondary);font-size:12px">Pas encore de donnees</div>';
+        }
+
+        // Edge Decay
+        const decayEl = document.getElementById('v4-edge-decay');
+        if (decayEl) {
+            if (decayRes.alerts && decayRes.alerts.length > 0) {
+                decayEl.innerHTML = decayRes.alerts.map(a => {
+                    const severity = a.drop >= 25 ? 'severe' : 'warning';
+                    return `<div class="decay-alert ${severity}">
+                        <span>${a.dimension}: ${a.value}</span>
+                        <span class="drop">-${a.drop.toFixed(0)}%</span>
+                        <span>${a.wr_7d.toFixed(0)}% vs ${a.wr_30d.toFixed(0)}%</span>
+                    </div>`;
+                }).join('');
+            } else {
+                decayEl.innerHTML = '<div style="color:var(--green);font-size:12px">Aucune alerte</div>';
+            }
+        }
+
+        // Top weights (sorted by absolute modifier)
+        const weightsEl = document.getElementById('v4-weights-top');
+        if (weightsEl) {
+            const sorted = (weightsRes.weights || [])
+                .filter(w => w.weight_modifier !== 0 && w.sample_size >= 5)
+                .sort((a, b) => Math.abs(b.weight_modifier) - Math.abs(a.weight_modifier))
+                .slice(0, 8);
+            weightsEl.innerHTML = sorted.map(w => {
+                const cls = w.weight_modifier > 0 ? 'positive' : 'negative';
+                return `<div class="weight-row">
+                    <span class="dim">${w.dimension}: ${w.dimension_value}</span>
+                    <span class="mod ${cls}">${w.weight_modifier > 0 ? '+' : ''}${w.weight_modifier.toFixed(1)}</span>
+                </div>`;
+            }).join('') || '<div style="color:var(--text-secondary);font-size:12px">Pas encore de poids</div>';
+        }
+
+        // Advanced stats
+        const advEl = document.getElementById('v4-advanced-stats');
+        if (advEl && advRes) {
+            advEl.innerHTML = `
+                <div class="adv-stat-row"><span>Profit Factor</span><span style="font-weight:700">${advRes.profit_factor || '--'}</span></div>
+                <div class="adv-stat-row"><span>Sharpe Ratio</span><span style="font-weight:700">${advRes.sharpe_ratio || '--'}</span></div>
+                <div class="adv-stat-row"><span>Max Drawdown</span><span style="font-weight:700;color:var(--red)">${advRes.max_drawdown_pct || 0}%</span></div>
+                <div class="adv-stat-row"><span>Streak W/L</span><span style="font-weight:700"><span style="color:var(--green)">${advRes.max_win_streak || 0}</span> / <span style="color:var(--red)">${advRes.max_loss_streak || 0}</span></span></div>
+                <div class="adv-stat-row"><span>Avg Win/Loss</span><span style="font-weight:700"><span style="color:var(--green)">+${(advRes.avg_win || 0).toFixed(3)}$</span> / <span style="color:var(--red)">${(advRes.avg_loss || 0).toFixed(3)}$</span></span></div>
+                <div class="adv-stat-row"><span>Frais estimes</span><span style="font-weight:700;color:var(--red)">-${(advRes.total_fees || 0).toFixed(2)}$</span></div>
+            `;
+
+            // Also update VS comparison advanced metrics
+            const el = (id) => document.getElementById(id);
+            if (el('comp-v4-fees')) el('comp-v4-fees').innerHTML = `<span style="color:var(--red)">-${(advRes.total_fees || 0).toFixed(2)}$</span>`;
+            if (el('comp-v4-pf')) el('comp-v4-pf').textContent = advRes.profit_factor || '--';
+            if (el('comp-v4-sharpe')) el('comp-v4-sharpe').textContent = advRes.sharpe_ratio || '--';
+            if (el('comp-v4-maxdd')) el('comp-v4-maxdd').innerHTML = `<span style="color:var(--red)">${advRes.max_drawdown_pct || 0}%</span>`;
+            if (el('comp-v4-streak')) el('comp-v4-streak').innerHTML = `<span style="color:var(--green)">${advRes.max_win_streak || 0}</span> / <span style="color:var(--red)">${advRes.max_loss_streak || 0}</span>`;
+        }
+    } catch (e) {
+        console.error('fetchV4LearningPanel error:', e);
     }
 }

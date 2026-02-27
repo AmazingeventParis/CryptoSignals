@@ -61,7 +61,8 @@ def calculate_risk(
     leverage = max(lev_min, min(lev_max, leverage))
 
     # --- R:R RATIO ---
-    rr_ratio = round(tp1_distance / risk, 2) if (risk > 0 and (tp1_distance := abs(tp1 - entry_price))) else 0
+    tp1_distance = abs(tp1 - entry_price)
+    rr_ratio = round(tp1_distance / risk, 2) if risk > 0 and tp1_distance > 0 else 0
 
     return {
         "stop_loss": round(stop_loss, 8),

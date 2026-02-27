@@ -311,6 +311,98 @@ async def get_trade_contexts(
     return {"contexts": contexts, "count": len(contexts), "bot_version": bot_version}
 
 
+@router.get("/learning/decayed-dimensions")
+async def get_decayed_dimensions(bot_version: str = Query("V4")):
+    """Dimensions en edge decay actif (V4 only)."""
+    bots = _get_bot_instances()
+    bot = bots.get(bot_version, bots.get("V4", {}))
+    learner = bot.get("adaptive_learner")
+    if not learner:
+        return {"decayed": [], "bot_version": bot_version}
+    decayed = learner.get_decayed_dimensions()
+    return {"decayed": decayed, "count": len(decayed), "bot_version": bot_version}
+
+
+@router.get("/stats/advanced")
+async def advanced_stats(bot_version: str = Query(None)):
+    """Advanced metrics: profit factor, Sharpe ratio, max drawdown, streaks."""
+    trades = await get_trades(limit=500, bot_version=bot_version)
+    if not trades:
+        return {
+            "profit_factor": 0, "sharpe_ratio": 0, "max_drawdown_pct": 0,
+            "max_win_streak": 0, "max_loss_streak": 0, "avg_win": 0, "avg_loss": 0,
+            "total_fees": 0,
+        }
+
+    pnls = [t.get("pnl_usd", 0) for t in trades]
+    gross_profits = sum(p for p in pnls if p > 0)
+    gross_losses = abs(sum(p for p in pnls if p < 0))
+    profit_factor = round(gross_profits / max(gross_losses, 0.01), 2)
+
+    # Sharpe ratio (annualized, assuming ~50 trades/day)
+    import numpy as np
+    if len(pnls) >= 2:
+        pnl_array = np.array(pnls)
+        mean_pnl = float(np.mean(pnl_array))
+        std_pnl = float(np.std(pnl_array))
+        sharpe = round(mean_pnl / max(std_pnl, 0.001) * (50 ** 0.5), 2)  # annualized
+    else:
+        sharpe = 0
+
+    # Max drawdown
+    cumulative = 0
+    peak = 0
+    max_dd = 0
+    for p in reversed(pnls):  # oldest first
+        cumulative += p
+        peak = max(peak, cumulative)
+        dd = peak - cumulative
+        max_dd = max(max_dd, dd)
+    initial_balance = 100.0
+    max_dd_pct = round(max_dd / max(initial_balance, 1) * 100, 2)
+
+    # Win/loss streaks
+    max_win_streak = 0
+    max_loss_streak = 0
+    current_streak = 0
+    current_type = None
+    for t in reversed(trades):  # oldest first
+        r = t.get("result", "")
+        if r == current_type:
+            current_streak += 1
+        else:
+            current_streak = 1
+            current_type = r
+        if r == "win":
+            max_win_streak = max(max_win_streak, current_streak)
+        elif r == "loss":
+            max_loss_streak = max(max_loss_streak, current_streak)
+
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    avg_win = round(sum(wins) / max(len(wins), 1), 4)
+    avg_loss = round(sum(losses) / max(len(losses), 1), 4)
+
+    # Estimate fees (V4 with 0.06% taker)
+    total_fees = 0.0
+    for t in trades:
+        pos_size = t.get("position_size_usd", 0)
+        if pos_size > 0:
+            total_fees += pos_size * 0.0006 * 2
+
+    return {
+        "profit_factor": profit_factor,
+        "sharpe_ratio": sharpe,
+        "max_drawdown_pct": max_dd_pct,
+        "max_win_streak": max_win_streak,
+        "max_loss_streak": max_loss_streak,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "total_fees": round(total_fees, 2),
+        "trade_count": len(trades),
+    }
+
+
 @router.get("/sentiment")
 async def get_sentiment():
     from app.services.sentiment import sentiment_analyzer
