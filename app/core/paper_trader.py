@@ -104,7 +104,7 @@ class PaperTrader:
                     logger.info(f"[{self.bot_version}] {reason}")
                     return False
 
-        # V4: Fee gate — skip if TP1 distance % < round-trip fees * 2
+        # V4: Fee gate — skip if TP1 distance % < round-trip fees
         if self.bot_version == "V4":
             entry_price = signal.get("entry_price", 0)
             tp1 = signal.get("tp1", 0)
@@ -112,11 +112,10 @@ class PaperTrader:
                 tp1_dist_pct = abs(tp1 - entry_price) / entry_price * 100
                 taker_pct = self.settings.get("fees", {}).get("taker_pct", 0.06)
                 fees_rt_pct = taker_pct * 2  # round-trip fees in %
-                min_tp1_pct = fees_rt_pct * 2  # TP1 must be >= 2x fees
-                if tp1_dist_pct < min_tp1_pct:
+                if tp1_dist_pct < fees_rt_pct:
                     logger.info(
                         f"[{self.bot_version}] FEE GATE: skip {signal['symbol']} {signal.get('mode','')} "
-                        f"TP1={tp1_dist_pct:.4f}% < min {min_tp1_pct:.4f}% (2x fees)"
+                        f"TP1={tp1_dist_pct:.4f}% < fees {fees_rt_pct:.4f}%"
                     )
                     return False
 

@@ -65,14 +65,14 @@ scalping:
     method: "atr"
     atr_multiplier: 1.2
     max_stop_pct: 0.5
-    min_stop_pct: 0.15        # plancher: TP1 a 0.5 R:R > frais 0.12%
+    min_stop_pct: 0.20        # plancher: TP1 a 1.0 R:R = 0.20% > frais 0.12%
 
   take_profit:
-    tp1_rr: 0.5
+    tp1_rr: 1.0
     tp1_close_pct: 70
-    tp2_rr: 0.8
+    tp2_rr: 1.5
     tp2_close_pct: 20
-    tp3_rr: 1.2
+    tp3_rr: 2.0
     tp3_close_pct: 10
 
   early_protection:
@@ -122,14 +122,14 @@ swing:
     method: "structure"
     buffer_atr: 0.5
     max_stop_pct: 1.0
-    min_stop_pct: 0.20        # plancher: TP1 a 0.8 R:R > frais 0.12%
+    min_stop_pct: 0.25        # plancher: TP1 a 1.0 R:R = 0.25% > frais 0.12%
 
   take_profit:
-    tp1_rr: 0.8
+    tp1_rr: 1.0
     tp1_close_pct: 60
-    tp2_rr: 1.2
+    tp2_rr: 1.5
     tp2_close_pct: 25
-    tp3_rr: 2.0
+    tp3_rr: 2.5
     tp3_close_pct: 15
 
   early_protection:
