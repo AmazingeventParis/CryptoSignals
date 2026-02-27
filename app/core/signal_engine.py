@@ -4,15 +4,26 @@ pour produire un signal final avec scoring 0-100.
 Accepte settings en parametre pour supporter V1 et V2.
 """
 import logging
+import math
+from datetime import datetime
 from app.config import SETTINGS, get_mode_config
 from app.core.indicators import compute_all_indicators
 from app.core.tradeability import evaluate_tradeability
 from app.core.direction import evaluate_direction
 from app.core.entry import find_best_entry, calculate_rr_score, candle_confirmation
 from app.core.risk_manager import calculate_risk
+from app.core.market_regime import detect_regime, regime_score_modifier
 from app.services.sentiment import sentiment_analyzer
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_val(val, default=0):
+    if val is None:
+        return default
+    if isinstance(val, float) and math.isnan(val):
+        return default
+    return val
 
 
 async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=None) -> dict:
@@ -107,6 +118,18 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
             )
 
     # =========================================
+    # V4 ONLY: REGIME DE MARCHE + MTF CONFLUENCE
+    # =========================================
+    is_v4 = s.get("_bot_version") == "V4"
+    regime_info = {}
+    market_regime = ""
+    mtf_confluence = 0.0
+    if is_v4:
+        regime_info = detect_regime(indicators_analysis)
+        market_regime = regime_info["regime"]
+        mtf_confluence = _compute_mtf_confluence(indicators_analysis, indicators_filter)
+
+    # =========================================
     # COUCHE C : ENTRY TRIGGER (timeframe analyse)
     # =========================================
     from app.core.trade_learner import trade_learner
@@ -178,6 +201,14 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
     setup_score = entry["pattern_score"] + entry["vol_score"] + rr_score + entry.get("confluence_score", 0)
     setup_score = min(100, max(0, setup_score + candle_modifier))
 
+    # V4 ONLY: Regime modifier sur le setup_score
+    regime_mod = 0
+    mtf_modifier = 0
+    if is_v4:
+        regime_mod = regime_score_modifier(market_regime, entry["type"])
+        setup_score = max(0, min(100, setup_score + regime_mod))
+        mtf_modifier = int(mtf_confluence)
+
     if entry["direction"] == "long":
         sentiment_normalized = (sentiment_score + 100) / 2
     else:
@@ -190,6 +221,28 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
         + setup_score * weights.get("setup", 0.25)
         + sentiment_normalized * weights.get("sentiment", 0.20)
     )
+
+    # V4 ONLY: MTF + Learning modifiers
+    learning_modifier = 0
+    learning_reasons = []
+    if is_v4:
+        final_score += mtf_modifier
+        adaptive_learner = _get_adaptive_learner("V4")
+        if adaptive_learner:
+            now = datetime.utcnow()
+            signal_ctx = {
+                "setup_type": entry["type"],
+                "symbol": symbol,
+                "mode": mode,
+                "regime": market_regime,
+                "hour_utc": now.hour,
+                "score": final_score,
+                "direction": entry["direction"],
+                "mtf_confluence": mtf_confluence,
+            }
+            learning_modifier, learning_reasons = adaptive_learner.get_total_modifier(signal_ctx)
+            final_score += learning_modifier
+
     final_score = max(0, min(100, final_score))
 
     min_score = mode_cfg["entry"]["min_score"]
@@ -211,8 +264,34 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
     reasons.append(f"Funding rate {market_data_dict.get('funding_rate', 0):+.4f}%")
     if sentiment["reasons"]:
         reasons.append(f"Sentiment: {', '.join(sentiment['reasons'][:2])}")
+    if regime_mod != 0:
+        reasons.append(f"Regime {market_regime} {regime_mod:+d}pts")
+    if mtf_modifier != 0:
+        reasons.append(f"MTF confluence {mtf_modifier:+d}pts")
+    if learning_modifier != 0:
+        reasons.append(f"Learning {learning_modifier:+d}pts")
 
-    return {
+    # V4 only: Build indicator snapshot for learning context propagation
+    _indicator_snapshot = {}
+    if is_v4:
+        atr_mean_val = atr_series.mean() if atr_series is not None and not atr_series.empty else 0
+        _indicator_snapshot = {
+            "rsi": _safe_val(indicators_analysis.get("last_rsi")),
+            "adx": _safe_val(indicators_analysis.get("last_adx")),
+            "atr": _safe_val(atr_current),
+            "atr_ratio": round(atr_current / atr_mean_val, 3) if atr_mean_val > 0 else 1.0,
+            "bb_bandwidth": _safe_val(indicators_analysis.get("last_bb_bandwidth")),
+            "volume_ratio": _safe_val(indicators_analysis.get("last_volume_ratio")),
+            "ema_spread_pct": round(abs(_safe_val(indicators_analysis.get("last_ema_fast")) - _safe_val(indicators_analysis.get("last_ema_slow"))) / max(_safe_val(indicators_analysis.get("last_ema_slow")), 1) * 100, 4),
+            "vwap_distance_pct": round(abs(_safe_val(indicators_analysis.get("last_close")) - _safe_val(indicators_analysis.get("last_vwap"))) / max(_safe_val(indicators_analysis.get("last_vwap")), 1) * 100, 4),
+            "macd_histogram": _safe_val(indicators_analysis.get("last_macd_histogram")),
+            "stoch_k": _safe_val(indicators_analysis.get("last_stoch_k")),
+            "stoch_d": _safe_val(indicators_analysis.get("last_stoch_d")),
+            "funding_rate": market_data_dict.get("funding_rate", 0),
+            "spread_pct": orderbook.get("spread_pct", 0),
+        }
+
+    result = {
         "type": "signal",
         "symbol": symbol,
         "mode": mode,
@@ -243,6 +322,28 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
         "all_setups": entry.get("all_setups", []),
     }
 
+    # V4 only: enrichments for learning context propagation
+    if is_v4:
+        result.update({
+            "market_regime": market_regime,
+            "regime_confidence": regime_info.get("confidence", 0),
+            "mtf_confluence": mtf_confluence,
+            "learning_modifier": learning_modifier,
+            "_entry_atr": _safe_val(atr_current),
+            "_indicator_snapshot": _indicator_snapshot,
+            "_regime_snapshot": regime_info,
+            "_scores_snapshot": {
+                "final_score": final_score,
+                "tradeability_score": tradeability["score"],
+                "direction_score": direction_score,
+                "setup_score": setup_score,
+                "sentiment_score": sentiment_score,
+                "mtf_confluence": mtf_confluence,
+            },
+        })
+
+    return result
+
 
 def _no_trade(
     symbol: str,
@@ -261,3 +362,48 @@ def _no_trade(
         "details": details or [],
         "tradeability_score": tradeability_score,
     }
+
+
+def _compute_mtf_confluence(indicators_analysis: dict, indicators_filter: dict) -> float:
+    """
+    Compare la structure et le RSI du TF analyse vs TF filtre.
+    Retourne un score de -10 a +10.
+    """
+    score = 0.0
+
+    # Structure alignment
+    struct_analysis = indicators_analysis.get("structure")
+    struct_filter = indicators_filter.get("structure")
+    if struct_analysis and struct_filter:
+        if struct_analysis.trend == struct_filter.trend and struct_analysis.trend != "neutral":
+            score += 5  # Aligned trending
+        elif struct_analysis.trend != "neutral" and struct_filter.trend != "neutral" and struct_analysis.trend != struct_filter.trend:
+            score -= 5  # Conflicting trends
+
+    # RSI alignment
+    rsi_analysis = _safe_val(indicators_analysis.get("last_rsi"), 50)
+    rsi_filter = _safe_val(indicators_filter.get("last_rsi"), 50)
+    both_bullish = rsi_analysis > 55 and rsi_filter > 55
+    both_bearish = rsi_analysis < 45 and rsi_filter < 45
+    conflicting = (rsi_analysis > 60 and rsi_filter < 40) or (rsi_analysis < 40 and rsi_filter > 60)
+
+    if both_bullish or both_bearish:
+        score += 5
+    elif conflicting:
+        score -= 5
+
+    return max(-10, min(10, score))
+
+
+# Registry for adaptive learners (set from main.py)
+_adaptive_learners: dict = {}
+
+
+def register_adaptive_learner(bot_version: str, learner):
+    _adaptive_learners[bot_version] = learner
+
+
+def _get_adaptive_learner(bot_version: str = None):
+    if not bot_version:
+        return None
+    return _adaptive_learners.get(bot_version)

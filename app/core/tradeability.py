@@ -133,6 +133,22 @@ def check_adx_trend(adx_val: float) -> tuple[float, str]:
         return 0.2, f"ADX {adx_val:.1f} range (pas de tendance)"
 
 
+def check_order_flow(bid_depth: float, ask_depth: float) -> tuple[float, str]:
+    """Analyse le ratio bid/ask pour detecter la pression acheteuse/vendeuse."""
+    total = bid_depth + ask_depth
+    if total == 0:
+        return 0.5, "Order flow indisponible"
+    ratio = bid_depth / total
+    if ratio > 0.6:
+        return 1.0, f"Pression acheteuse forte (bid ratio {ratio:.2f})"
+    elif ratio < 0.4:
+        return 1.0, f"Pression vendeuse forte (bid ratio {ratio:.2f})"
+    elif 0.45 <= ratio <= 0.55:
+        return 0.5, f"Order flow equilibre (bid ratio {ratio:.2f})"
+    else:
+        return 0.7, f"Order flow {ratio:.2f}"
+
+
 def evaluate_tradeability(
     atr_current: float,
     atr_mean: float,
@@ -159,6 +175,10 @@ def evaluate_tradeability(
     checks["funding"] = check_funding(funding_rate, t)
     checks["oi_stability"] = check_oi_stability(oi_change_pct, t)
     checks["adx_trend"] = check_adx_trend(adx_val)
+
+    # Order flow only if configured (V4 only)
+    if "order_flow" in w:
+        checks["order_flow"] = check_order_flow(bid_depth, ask_depth)
 
     # Kill switches
     for name, (score, reason) in checks.items():

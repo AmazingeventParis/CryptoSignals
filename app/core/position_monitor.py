@@ -43,6 +43,12 @@ class PositionMonitor:
         self._processing: set = set()
         self._on_close_callbacks: list = []
 
+    def set_adaptive_learner(self, learner):
+        self._adaptive_learner = learner
+
+    def _get_adaptive_learner(self):
+        return getattr(self, "_adaptive_learner", None)
+
     def add_on_close_callback(self, callback):
         self._on_close_callbacks.append(callback)
 
@@ -101,6 +107,16 @@ class PositionMonitor:
             "setup_type": signal.get("setup_type", "unknown"),
             "bot_version": self.bot_version,
         }
+
+        # V4 only: tracking metrics + snapshots for adaptive learning
+        if self.bot_version == "V4":
+            pos_data["_max_profit_usd"] = 0.0
+            pos_data["_max_drawdown_usd"] = 0.0
+            pos_data["_original_sl"] = signal["stop_loss"]
+            pos_data["_entry_atr"] = signal.get("_entry_atr", 0)
+            pos_data["_indicator_snapshot"] = signal.get("_indicator_snapshot", {})
+            pos_data["_regime_snapshot"] = signal.get("_regime_snapshot", {})
+            pos_data["_scores_snapshot"] = signal.get("_scores_snapshot", {})
 
         pos_id = await insert_active_position(pos_data)
         pos_data["id"] = pos_id
@@ -184,6 +200,22 @@ class PositionMonitor:
                 continue
             if pos_id in self._processing:
                 continue
+
+            # --- V4 only: Track max profit / max drawdown + stale timeout ---
+            if self.bot_version == "V4":
+                current_pnl_track = self._calc_unrealized_pnl(pos, price)
+                if current_pnl_track > pos.get("_max_profit_usd", 0):
+                    pos["_max_profit_usd"] = current_pnl_track
+                if current_pnl_track < pos.get("_max_drawdown_usd", 0):
+                    pos["_max_drawdown_usd"] = current_pnl_track
+
+                if self._check_stale_position(pos, current_pnl_track):
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_stale_close(pos, price, current_pnl_track)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
 
             direction = pos["direction"]
 
@@ -274,10 +306,21 @@ class PositionMonitor:
 
     async def _backup_check(self):
         await self._reload_positions()
+        # V4 only: Dynamic SL adjustment based on current volatility
+        if self.bot_version == "V4":
+            await self._dynamic_sl_adjust()
 
     async def _reload_positions(self):
         positions = await get_active_positions(bot_version=self.bot_version)
         for pos in positions:
+            # V4 only: Preserve in-memory tracking fields from existing positions
+            if self.bot_version == "V4":
+                existing = self._positions.get(pos["id"])
+                if existing:
+                    for key in ("_max_profit_usd", "_max_drawdown_usd", "_original_sl",
+                                "_entry_atr", "_indicator_snapshot", "_regime_snapshot", "_scores_snapshot"):
+                        if key in existing:
+                            pos[key] = existing[key]
             self._positions[pos["id"]] = pos
             self._ensure_ws(pos["symbol"])
 
@@ -285,6 +328,58 @@ class PositionMonitor:
         for pid in list(self._positions.keys()):
             if pid not in active_ids:
                 del self._positions[pid]
+
+    async def _dynamic_sl_adjust(self):
+        """Ajuste dynamiquement le SL si la volatilite augmente (avant TP1 seulement)."""
+        for pos_id, pos in list(self._positions.items()):
+            if pos.get("state") == "closed" or pos.get("tp1_hit"):
+                continue
+
+            entry_atr = pos.get("_entry_atr", 0)
+            original_sl = pos.get("_original_sl", 0)
+            if entry_atr <= 0 or original_sl <= 0:
+                continue
+
+            # Fetch current ATR
+            try:
+                from app.core.indicators import atr as calc_atr
+                df = await market_data.fetch_ohlcv(pos["symbol"], "5m", limit=30)
+                if df.empty or len(df) < 14:
+                    continue
+                current_atr_series = calc_atr(df, 14)
+                current_atr = current_atr_series.iloc[-1]
+                if current_atr != current_atr:  # NaN check
+                    continue
+            except Exception:
+                continue
+
+            atr_ratio = current_atr / entry_atr if entry_atr > 0 else 1.0
+            if atr_ratio <= 1.5:
+                continue
+
+            # Widen SL proportionally (cap at 2x original distance)
+            entry_price = pos["entry_price"]
+            original_distance = abs(entry_price - original_sl)
+            new_distance = original_distance * min(atr_ratio, 2.0)
+
+            if pos["direction"] == "long":
+                new_sl = round(entry_price - new_distance, 8)
+                if new_sl < pos["stop_loss"]:
+                    pos["stop_loss"] = new_sl
+                    await update_position(pos_id, {"stop_loss": new_sl})
+                    logger.info(
+                        f"[{self.bot_version}] DYNAMIC SL {pos['symbol']} "
+                        f"widened to {new_sl} (ATR ratio {atr_ratio:.2f})"
+                    )
+            else:
+                new_sl = round(entry_price + new_distance, 8)
+                if new_sl > pos["stop_loss"]:
+                    pos["stop_loss"] = new_sl
+                    await update_position(pos_id, {"stop_loss": new_sl})
+                    logger.info(
+                        f"[{self.bot_version}] DYNAMIC SL {pos['symbol']} "
+                        f"widened to {new_sl} (ATR ratio {atr_ratio:.2f})"
+                    )
 
     # --- Handlers TP/SL ---
 
@@ -500,6 +595,47 @@ class PositionMonitor:
             f"Stop loss rapide ! Position fermee 100%\nPnL: {pnl_usd:.2f}$"
         )
 
+    # --- Stale position timeout ---
+
+    def _check_stale_position(self, pos: dict, current_pnl: float) -> bool:
+        """Verifie si la position est stagnante et doit etre fermee."""
+        mode = pos.get("mode", "scalping")
+        mode_cfg = self.settings.get(mode, {}) if self.settings else {}
+        max_hold = mode_cfg.get("max_hold_seconds", 0)
+        if max_hold <= 0:
+            return False
+
+        entry_time = pos.get("entry_time") or pos.get("created_at")
+        if not entry_time:
+            return False
+
+        try:
+            elapsed = (datetime.utcnow() - datetime.fromisoformat(entry_time)).total_seconds()
+        except Exception:
+            return False
+
+        if elapsed < max_hold:
+            return False
+
+        # Ferme seulement si PnL < $0.05 (stagnant)
+        if current_pnl < 0.05:
+            return True
+        return False
+
+    async def _handle_stale_close(self, pos: dict, price: float, pnl_usd: float):
+        symbol = pos["symbol"]
+        logger.info(f"[{self.bot_version}] STALE TIMEOUT {symbol} PnL={pnl_usd:.4f}$")
+
+        await self._cancel_remaining_tp_orders(pos)
+        await self._cancel_order_safe(pos.get("sl_order_id"), symbol)
+        await self._close_and_journal(pos, "stale_timeout", price, pnl_usd)
+        pos["state"] = "closed"
+
+        await send_trade_update(
+            symbol, "stale_timeout",
+            f"Position stagnante fermee\nPnL: {pnl_usd:+.2f}$"
+        )
+
     # --- Helpers ordres ---
 
     async def _cancel_order_safe(self, order_id: str, symbol: str) -> bool:
@@ -606,21 +742,89 @@ class PositionMonitor:
         })
         logger.info(f"[{self.bot_version}] Trade journalise: {pos['symbol']} {result} PnL={pnl_usd:.2f}$ ({close_reason})")
 
-        # Apprentissage
+        # Apprentissage (ancien trade_learner - backward compat)
+        setup_type = pos.get("setup_type", "unknown")
+        if setup_type == "unknown" and pos.get("signal_id"):
+            from app.database import get_signal_by_id
+            sig = await get_signal_by_id(pos["signal_id"])
+            if sig:
+                setup_type = sig.get("setup_type", "unknown")
         try:
             from app.core.trade_learner import trade_learner
-            setup_type = pos.get("setup_type", "unknown")
-            if setup_type == "unknown" and pos.get("signal_id"):
-                from app.database import get_signal_by_id
-                sig = await get_signal_by_id(pos["signal_id"])
-                if sig:
-                    setup_type = sig.get("setup_type", "unknown")
             await trade_learner.record_trade(
                 setup_type, pos["symbol"], pos.get("mode", "unknown"),
                 pnl_usd > 0, pnl_usd,
             )
         except Exception as e:
             logger.error(f"Erreur trade_learner: {e}")
+
+        # V4 only: Apprentissage adaptatif
+        if self.bot_version == "V4":
+            try:
+                learner = self._get_adaptive_learner()
+                if learner:
+                    snap = pos.get("_indicator_snapshot", {})
+                    regime = pos.get("_regime_snapshot", {})
+                    scores = pos.get("_scores_snapshot", {})
+                    margin = pos.get("margin_required", 1) or 1
+                    max_profit = pos.get("_max_profit_usd", 0)
+                    max_dd = pos.get("_max_drawdown_usd", 0)
+                    entry_time_parsed = pos.get("entry_time") or pos.get("created_at")
+                    hour_utc = 12
+                    day_of_week = 0
+                    if entry_time_parsed:
+                        try:
+                            dt = datetime.fromisoformat(entry_time_parsed)
+                            hour_utc = dt.hour
+                            day_of_week = dt.weekday()
+                        except Exception:
+                            pass
+                    ctx = {
+                        "trade_id": None,
+                        "signal_id": pos.get("signal_id"),
+                        "bot_version": self.bot_version,
+                        "final_score": scores.get("final_score"),
+                        "tradeability_score": scores.get("tradeability_score"),
+                        "direction_score": scores.get("direction_score"),
+                        "setup_score": scores.get("setup_score"),
+                        "sentiment_score": scores.get("sentiment_score"),
+                        "rsi": snap.get("rsi"),
+                        "adx": snap.get("adx"),
+                        "atr": snap.get("atr"),
+                        "atr_ratio": snap.get("atr_ratio"),
+                        "bb_bandwidth": snap.get("bb_bandwidth"),
+                        "volume_ratio": snap.get("volume_ratio"),
+                        "ema_spread_pct": snap.get("ema_spread_pct"),
+                        "vwap_distance_pct": snap.get("vwap_distance_pct"),
+                        "macd_histogram": snap.get("macd_histogram"),
+                        "stoch_k": snap.get("stoch_k"),
+                        "stoch_d": snap.get("stoch_d"),
+                        "funding_rate": snap.get("funding_rate"),
+                        "spread_pct": snap.get("spread_pct"),
+                        "market_regime": regime.get("regime"),
+                        "regime_confidence": regime.get("confidence"),
+                        "setup_type": setup_type,
+                        "symbol": pos["symbol"],
+                        "mode": pos.get("mode", "unknown"),
+                        "direction": pos["direction"],
+                        "mtf_confluence": scores.get("mtf_confluence") if "mtf_confluence" in scores else None,
+                        "hour_utc": hour_utc,
+                        "day_of_week": day_of_week,
+                        "max_profit_usd": max_profit,
+                        "max_drawdown_usd": max_dd,
+                        "max_profit_pct": round(max_profit / margin * 100, 2) if margin else 0,
+                        "max_drawdown_pct": round(max_dd / margin * 100, 2) if margin else 0,
+                        "pnl_usd": round(pnl_usd, 4),
+                        "pnl_pct": round(pnl_pct, 2),
+                        "result": result,
+                        "close_reason": close_reason,
+                        "duration_seconds": duration,
+                        "entry_time": entry_time,
+                        "exit_time": now,
+                    }
+                    await learner.record_trade_context(ctx)
+            except Exception as e:
+                logger.error(f"Erreur adaptive_learner: {e}", exc_info=True)
 
         for cb in self._on_close_callbacks:
             try:

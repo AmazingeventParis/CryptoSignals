@@ -139,6 +139,73 @@ CREATE TABLE IF NOT EXISTS active_positions (
     pnl_usd REAL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS trade_context (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_id INTEGER,
+    signal_id INTEGER,
+    bot_version TEXT DEFAULT 'V2',
+    -- Scores au moment du signal
+    final_score REAL,
+    tradeability_score REAL,
+    direction_score REAL,
+    setup_score REAL,
+    sentiment_score REAL,
+    -- Indicateurs au moment de l'entree
+    rsi REAL,
+    adx REAL,
+    atr REAL,
+    atr_ratio REAL,
+    bb_bandwidth REAL,
+    volume_ratio REAL,
+    ema_spread_pct REAL,
+    vwap_distance_pct REAL,
+    macd_histogram REAL,
+    stoch_k REAL,
+    stoch_d REAL,
+    funding_rate REAL,
+    spread_pct REAL,
+    -- Regime et contexte
+    market_regime TEXT,
+    regime_confidence REAL,
+    setup_type TEXT,
+    symbol TEXT,
+    mode TEXT,
+    direction TEXT,
+    mtf_confluence REAL,
+    hour_utc INTEGER,
+    day_of_week INTEGER,
+    -- Performance de la position pendant sa duree de vie
+    max_profit_usd REAL DEFAULT 0,
+    max_drawdown_usd REAL DEFAULT 0,
+    max_profit_pct REAL DEFAULT 0,
+    max_drawdown_pct REAL DEFAULT 0,
+    -- Resultat
+    pnl_usd REAL,
+    pnl_pct REAL,
+    result TEXT,
+    close_reason TEXT,
+    duration_seconds INTEGER,
+    entry_time TEXT,
+    exit_time TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS learning_weights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dimension TEXT NOT NULL,
+    dimension_value TEXT NOT NULL,
+    bot_version TEXT DEFAULT 'V2',
+    weight_modifier REAL DEFAULT 0,
+    confidence REAL DEFAULT 0,
+    sample_size INTEGER DEFAULT 0,
+    win_rate_7d REAL DEFAULT 0,
+    win_rate_30d REAL DEFAULT 0,
+    win_rate_all REAL DEFAULT 0,
+    avg_pnl REAL DEFAULT 0,
+    last_updated TEXT,
+    UNIQUE(dimension, dimension_value, bot_version)
+);
 """
 
 # Migration: ajouter bot_version aux tables existantes
@@ -572,3 +639,109 @@ async def reset_paper_portfolio(initial_balance: float = 100.0, bot_version: str
                 (initial_balance, initial_balance, "V2"),
             )
         await db.commit()
+
+
+# --- Trade Context (apprentissage adaptatif) ---
+
+async def insert_trade_context(ctx: dict):
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            """INSERT INTO trade_context
+            (trade_id, signal_id, bot_version,
+             final_score, tradeability_score, direction_score, setup_score, sentiment_score,
+             rsi, adx, atr, atr_ratio, bb_bandwidth, volume_ratio,
+             ema_spread_pct, vwap_distance_pct, macd_histogram, stoch_k, stoch_d,
+             funding_rate, spread_pct,
+             market_regime, regime_confidence, setup_type, symbol, mode, direction,
+             mtf_confluence, hour_utc, day_of_week,
+             max_profit_usd, max_drawdown_usd, max_profit_pct, max_drawdown_pct,
+             pnl_usd, pnl_pct, result, close_reason, duration_seconds,
+             entry_time, exit_time)
+            VALUES (?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?,?,?,?, ?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?)""",
+            (
+                ctx.get("trade_id"), ctx.get("signal_id"), ctx.get("bot_version", "V2"),
+                ctx.get("final_score"), ctx.get("tradeability_score"),
+                ctx.get("direction_score"), ctx.get("setup_score"), ctx.get("sentiment_score"),
+                ctx.get("rsi"), ctx.get("adx"), ctx.get("atr"), ctx.get("atr_ratio"),
+                ctx.get("bb_bandwidth"), ctx.get("volume_ratio"),
+                ctx.get("ema_spread_pct"), ctx.get("vwap_distance_pct"),
+                ctx.get("macd_histogram"), ctx.get("stoch_k"), ctx.get("stoch_d"),
+                ctx.get("funding_rate"), ctx.get("spread_pct"),
+                ctx.get("market_regime"), ctx.get("regime_confidence"),
+                ctx.get("setup_type"), ctx.get("symbol"), ctx.get("mode"), ctx.get("direction"),
+                ctx.get("mtf_confluence"), ctx.get("hour_utc"), ctx.get("day_of_week"),
+                ctx.get("max_profit_usd", 0), ctx.get("max_drawdown_usd", 0),
+                ctx.get("max_profit_pct", 0), ctx.get("max_drawdown_pct", 0),
+                ctx.get("pnl_usd"), ctx.get("pnl_pct"), ctx.get("result"),
+                ctx.get("close_reason"), ctx.get("duration_seconds"),
+                ctx.get("entry_time"), ctx.get("exit_time"),
+            ),
+        )
+        await db.commit()
+
+
+async def upsert_learning_weight(dimension: str, value: str, is_win: bool, pnl: float, bot_version: str = "V2"):
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            """INSERT INTO learning_weights (dimension, dimension_value, bot_version,
+                 weight_modifier, confidence, sample_size, avg_pnl, last_updated)
+            VALUES (?, ?, ?, 0, 0, 1, ?, ?)
+            ON CONFLICT(dimension, dimension_value, bot_version) DO UPDATE SET
+                sample_size = sample_size + 1,
+                avg_pnl = (avg_pnl * sample_size + ?) / (sample_size + 1),
+                last_updated = ?""",
+            (dimension, value, bot_version, pnl, now, pnl, now),
+        )
+        await db.commit()
+
+
+async def update_learning_weight_stats(
+    dimension: str, value: str, bot_version: str,
+    weight_modifier: float, confidence: float,
+    win_rate_7d: float, win_rate_30d: float, win_rate_all: float,
+):
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            """UPDATE learning_weights SET
+                weight_modifier = ?, confidence = ?,
+                win_rate_7d = ?, win_rate_30d = ?, win_rate_all = ?,
+                last_updated = ?
+            WHERE dimension = ? AND dimension_value = ? AND bot_version = ?""",
+            (weight_modifier, confidence, win_rate_7d, win_rate_30d, win_rate_all,
+             now, dimension, value, bot_version),
+        )
+        await db.commit()
+
+
+async def get_all_learning_weights(bot_version: str = None) -> list[dict]:
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        query = "SELECT * FROM learning_weights"
+        params = []
+        if bot_version:
+            query += " WHERE bot_version = ?"
+            params.append(bot_version)
+        query += " ORDER BY dimension, dimension_value"
+        cursor = await db.execute(query, params)
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_trade_context_window(bot_version: str = None, days: int = 0, limit: int = 500) -> list[dict]:
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        where_clauses = []
+        params = []
+        if bot_version:
+            where_clauses.append("bot_version = ?")
+            params.append(bot_version)
+        if days > 0:
+            where_clauses.append(f"exit_time >= datetime('now', '-{days} days')")
+        where = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+        query = f"SELECT * FROM trade_context{where} ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        cursor = await db.execute(query, params)
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]

@@ -56,6 +56,19 @@ class PaperTrader:
                     logger.debug(f"[{self.bot_version}] Paper: deja une position {signal['symbol']} {signal['direction']}")
                     return False
 
+        # V4 only: Anti-correlation guard: max 3 positions dans la meme direction
+        if self.bot_version == "V4" and self._position_monitor:
+            same_dir_count = sum(
+                1 for p in self._position_monitor._positions.values()
+                if p.get("state") != "closed" and p.get("direction") == signal["direction"]
+            )
+            if same_dir_count >= 3:
+                logger.info(
+                    f"[{self.bot_version}] Anti-correlation: {same_dir_count} {signal['direction'].upper()} "
+                    f"deja ouvertes, skip {signal['symbol']}"
+                )
+                return False
+
         portfolio = await get_paper_portfolio(self.bot_version)
         available = portfolio["current_balance"] - portfolio["reserved_margin"]
         margin = FIXED_MARGIN

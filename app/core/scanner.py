@@ -17,6 +17,8 @@ class Scanner:
     def __init__(self, name="V2", settings=None):
         self.name = name
         self.settings = settings or SETTINGS
+        # Inject bot_version into settings so signal_engine can find the learner
+        self.settings["_bot_version"] = name
         self.running = False
         self.last_signals: dict[str, dict] = {}
         self.cooldowns: dict[str, datetime] = {}

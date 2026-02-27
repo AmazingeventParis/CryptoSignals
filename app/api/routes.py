@@ -6,7 +6,7 @@ import httpx
 from fastapi import APIRouter, Query
 from app.database import get_signals, get_trades, get_stats, get_active_positions
 from app.core.market_data import market_data
-from app.config import get_enabled_pairs, SETTINGS, SETTINGS_V1, SETTINGS_V2, SETTINGS_V3, APP_MODE, reload_settings, get_mode_config
+from app.config import get_enabled_pairs, SETTINGS, SETTINGS_V1, SETTINGS_V2, SETTINGS_V3, SETTINGS_V4, APP_MODE, reload_settings, get_mode_config
 
 router = APIRouter(prefix="/api")
 
@@ -30,6 +30,7 @@ async def get_status():
             "V1": bots["V1"]["scanner"].get_status(),
             "V2": bots["V2"]["scanner"].get_status(),
             "V3": bots["V3"]["scanner"].get_status(),
+            "V4": bots["V4"]["scanner"].get_status(),
         },
     }
 
@@ -149,7 +150,8 @@ async def debug_pair(symbol: str, mode: str = Query("scalping"), bot_version: st
     """Debug: analyse une paire et retourne le resultat complet."""
     from app.core.signal_engine import analyze_pair
     symbol_fmt = symbol.replace("-", "/")
-    s = SETTINGS_V1 if bot_version == "V1" else SETTINGS_V3 if bot_version == "V3" else SETTINGS_V2
+    settings_map = {"V1": SETTINGS_V1, "V2": SETTINGS_V2, "V3": SETTINGS_V3, "V4": SETTINGS_V4}
+    s = settings_map.get(bot_version, SETTINGS_V2)
     mode_cfg = get_mode_config(mode, s)
     if not mode_cfg:
         return {"error": "Mode inconnu"}
@@ -241,6 +243,50 @@ async def get_learning_stats():
     from app.core.trade_learner import trade_learner
     stats = await trade_learner.get_all_stats()
     return {"stats": stats, "count": len(stats)}
+
+
+@router.get("/learning/weights")
+async def get_learning_weights(bot_version: str = Query("V4")):
+    """Tous les poids appris par l'adaptive learner (V4 only)."""
+    from app.database import get_all_learning_weights
+    weights = await get_all_learning_weights(bot_version)
+    return {"weights": weights, "count": len(weights), "bot_version": bot_version}
+
+
+@router.get("/learning/calibration")
+async def get_learning_calibration(bot_version: str = Query("V4")):
+    """Win rate par tranche de score (calibration des scores, V4 only)."""
+    bots = _get_bot_instances()
+    bot = bots.get(bot_version, bots.get("V4", {}))
+    learner = bot.get("adaptive_learner")
+    if not learner:
+        return {"calibration": [], "bot_version": bot_version}
+    calibration = await learner.get_calibration()
+    return {"calibration": calibration, "bot_version": bot_version}
+
+
+@router.get("/learning/edge-decay")
+async def get_edge_decay(bot_version: str = Query("V4")):
+    """Alertes de degradation d'edge (WR 7j chute vs WR 30j, V4 only)."""
+    bots = _get_bot_instances()
+    bot = bots.get(bot_version, bots.get("V4", {}))
+    learner = bot.get("adaptive_learner")
+    if not learner:
+        return {"alerts": [], "bot_version": bot_version}
+    alerts = await learner.get_edge_decay_alerts()
+    return {"alerts": alerts, "count": len(alerts), "bot_version": bot_version}
+
+
+@router.get("/learning/context")
+async def get_trade_contexts(
+    bot_version: str = Query("V4"),
+    limit: int = Query(50, ge=1, le=500),
+    days: int = Query(0, ge=0, le=365),
+):
+    """Historique des contextes de trades pour analyse (V4 only)."""
+    from app.database import get_trade_context_window
+    contexts = await get_trade_context_window(bot_version, days=days, limit=limit)
+    return {"contexts": contexts, "count": len(contexts), "bot_version": bot_version}
 
 
 @router.get("/sentiment")

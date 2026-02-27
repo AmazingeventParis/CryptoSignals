@@ -17,10 +17,11 @@ def load_settings(path=None) -> dict:
         return yaml.safe_load(f)
 
 
-# Charger les 3 configs V1, V2 et V3
+# Charger les 4 configs V1, V2, V3 et V4
 SETTINGS_V1 = load_settings(BASE_DIR / "config" / "settings_V1.yaml")
 SETTINGS_V2 = load_settings(BASE_DIR / "config" / "settings_V2.yaml")
 SETTINGS_V3 = load_settings(BASE_DIR / "config" / "settings_V3.yaml")
+SETTINGS_V4 = load_settings(BASE_DIR / "config" / "settings_V4.yaml")
 SETTINGS = SETTINGS_V2  # Default retro-compat
 
 # Env vars
@@ -49,8 +50,9 @@ def get_mode_config(mode: str, settings=None) -> dict:
 
 
 def reload_settings():
-    global SETTINGS, SETTINGS_V1, SETTINGS_V2, SETTINGS_V3
+    global SETTINGS, SETTINGS_V1, SETTINGS_V2, SETTINGS_V3, SETTINGS_V4
     SETTINGS_V1 = load_settings(BASE_DIR / "config" / "settings_V1.yaml")
     SETTINGS_V2 = load_settings(BASE_DIR / "config" / "settings_V2.yaml")
     SETTINGS_V3 = load_settings(BASE_DIR / "config" / "settings_V3.yaml")
+    SETTINGS_V4 = load_settings(BASE_DIR / "config" / "settings_V4.yaml")
     SETTINGS = SETTINGS_V2
