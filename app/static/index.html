@@ -8,14 +8,15 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=71">
+    <link rel="stylesheet" href="/static/style.css?v=72">
 </head>
 <body>
     <div id="app">
         <div class="desktop-layout">
         <!-- SIDEBAR -->
         <aside class="sidebar">
-            <div style="display:flex;justify-content:flex-end;padding:8px 0 0">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0 0">
+                <button onclick="resetAllPaper()" class="btn-reset-all" title="Reset tous les bots">Reset All</button>
                 <button onclick="refreshAll()" class="btn-icon" title="Rafraichir">&#x21bb;</button>
             </div>
 
@@ -39,6 +40,7 @@
                     <div class="stat-card"><div class="stat-value" id="v1-active">0</div><div class="stat-label">Signaux</div></div>
                     <div class="stat-card"><div class="stat-value" id="v1-trades">0</div><div class="stat-label">Trades</div></div>
                 </div>
+                <div class="last-reset" id="v1-last-reset"></div>
             </div>
 
             <!-- Bot V2 (assoupli) -->
@@ -61,6 +63,7 @@
                     <div class="stat-card"><div class="stat-value" id="v2-active">0</div><div class="stat-label">Signaux</div></div>
                     <div class="stat-card"><div class="stat-value" id="v2-trades">0</div><div class="stat-label">Trades</div></div>
                 </div>
+                <div class="last-reset" id="v2-last-reset"></div>
             </div>
 
             <!-- Bot V3 (quick profit) -->
@@ -83,6 +86,7 @@
                     <div class="stat-card"><div class="stat-value" id="v3-active">0</div><div class="stat-label">Signaux</div></div>
                     <div class="stat-card"><div class="stat-value" id="v3-trades">0</div><div class="stat-label">Trades</div></div>
                 </div>
+                <div class="last-reset" id="v3-last-reset"></div>
             </div>
 
             <!-- Bot V4 (adaptive) -->
@@ -105,6 +109,7 @@
                     <div class="stat-card"><div class="stat-value" id="v4-active">0</div><div class="stat-label">Signaux</div></div>
                     <div class="stat-card"><div class="stat-value" id="v4-trades">0</div><div class="stat-label">Trades</div></div>
                 </div>
+                <div class="last-reset" id="v4-last-reset"></div>
             </div>
 
             <!-- Freqtrade Stats -->
@@ -141,6 +146,7 @@
                 <button class="tab" onclick="switchTab('charts')">Charts</button>
                 <button class="tab" onclick="switchTab('trades')">Journal</button>
                 <button class="tab" onclick="switchTab('compare')"><span class="compare-badge-sm">VS</span> Comparaison</button>
+                <button class="tab" onclick="switchTab('historique')">Historique</button>
                 <button class="tab" onclick="switchTab('pairs')">Paires</button>
             </div>
 
@@ -273,6 +279,25 @@
                 <div id="compare-chart-container" class="compare-chart-container"></div>
             </div>
 
+            <!-- Historique Tab -->
+            <div id="tab-historique" class="tab-content">
+                <div class="historique-header">
+                    <h2>Historique Performance</h2>
+                    <div class="historique-filters">
+                        <button class="histo-btn active" onclick="changeHistoPeriod(24)">24h</button>
+                        <button class="histo-btn" onclick="changeHistoPeriod(48)">2j</button>
+                        <button class="histo-btn" onclick="changeHistoPeriod(72)">3j</button>
+                        <button class="histo-btn" onclick="changeHistoPeriod(96)">4j</button>
+                        <button class="histo-btn" onclick="changeHistoPeriod(120)">5j</button>
+                        <button class="histo-btn" onclick="changeHistoPeriod(144)">6j</button>
+                        <button class="histo-btn" onclick="changeHistoPeriod(168)">1 sem</button>
+                    </div>
+                </div>
+                <div id="historique-content" class="historique-content">
+                    <div class="empty-state">Chargement...</div>
+                </div>
+            </div>
+
             <!-- Pairs Tab -->
             <div id="tab-pairs" class="tab-content">
                 <div id="pairs-list" class="pairs-list">
@@ -343,6 +368,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=71"></script>
+    <script src="/static/app.js?v=72"></script>
 </body>
 </html>

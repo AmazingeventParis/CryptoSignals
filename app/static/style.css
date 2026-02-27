@@ -779,3 +779,57 @@ body {
 .compare-stat .value { font-weight: 600; font-family: monospace; }
 .compare-chart-container { height: 400px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .compare-empty { color: var(--text-secondary); font-size: 14px; text-align: center; padding: 60px 0; }
+
+/* Reset All button */
+.btn-reset-all {
+    background: rgba(248,81,73,0.12); border: 1px solid rgba(248,81,73,0.3);
+    color: var(--red); padding: 4px 10px; border-radius: 6px;
+    cursor: pointer; font-size: 11px; font-weight: 700; transition: all 0.15s;
+}
+.btn-reset-all:hover { background: var(--red); color: #fff; }
+
+/* Last reset date */
+.last-reset {
+    font-size: 10px; color: var(--text-secondary); padding: 0 0 4px;
+    text-align: right;
+}
+
+/* Historique tab */
+.historique-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; flex-wrap: wrap; gap: 8px;
+}
+.historique-header h2 { font-size: 16px; color: var(--text); margin: 0; }
+.historique-filters { display: flex; gap: 4px; }
+.histo-btn {
+    background: var(--bg-card); border: 1px solid var(--border); color: var(--text-secondary);
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+    transition: all .15s;
+}
+.histo-btn:hover { border-color: var(--text-secondary); color: var(--text); }
+.histo-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+.historique-content { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+
+.histo-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; position: relative;
+}
+.histo-card-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 12px; font-size: 15px; font-weight: 700;
+}
+.histo-row {
+    display: flex; justify-content: space-between; padding: 5px 0;
+    font-size: 13px; border-bottom: 1px solid var(--border);
+}
+.histo-row:last-child { border-bottom: none; }
+.histo-row .label { color: var(--text-secondary); }
+.histo-row .value { font-weight: 600; font-family: monospace; }
+.histo-pnl-big {
+    font-size: 24px; font-weight: 800; font-family: monospace;
+    text-align: center; padding: 8px 0 12px;
+}
+.histo-no-trades {
+    color: var(--text-secondary); font-size: 12px; text-align: center; padding: 20px 0;
+}

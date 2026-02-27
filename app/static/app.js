@@ -122,6 +122,13 @@ function updateBotSidebar(v, data) {
     const balEl = document.getElementById(`${v}-balance`);
     balEl.textContent = `$${balance.toFixed(2)}`;
     balEl.style.color = balance >= (data.initial_balance || 100) ? 'var(--green)' : 'var(--red)';
+
+    // Last reset date
+    const resetEl = document.getElementById(`${v}-last-reset`);
+    if (resetEl && data.created_at) {
+        const d = new Date(data.created_at.endsWith('Z') ? data.created_at : data.created_at + 'Z');
+        resetEl.textContent = `Reset: ${d.toLocaleDateString('fr-FR')} ${d.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'})}`;
+    }
 }
 
 async function fetchTrades() {
@@ -319,6 +326,7 @@ function switchTab(tab) {
         }
     }
     if (tab === 'compare') loadCompareData();
+    if (tab === 'historique') loadHistorique();
 }
 
 // --- Charts ---
@@ -1308,6 +1316,16 @@ async function resetPaper(botVersion) {
     }
 }
 
+async function resetAllPaper() {
+    if (!confirm('Remettre TOUS les portefeuilles (V1+V2+V3+V4) a 100$ ?\nTous les trades et signaux seront effaces.')) return;
+    try {
+        await fetch(`${API}/api/paper/reset`, { method: 'POST' });
+        refreshAll();
+    } catch (e) {
+        console.error('Reset all erreur:', e);
+    }
+}
+
 // ============================================
 // POPUP CHART (pour positions)
 // ============================================
@@ -2195,4 +2213,72 @@ function changeCompPeriod(days) {
     document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
     event.target.classList.add('active');
     loadCompareData();
+}
+
+// ============================================
+// HISTORIQUE — Performance par periode
+// ============================================
+let histoPeriodHours = 24;
+
+function changeHistoPeriod(hours) {
+    histoPeriodHours = hours;
+    document.querySelectorAll('.histo-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    loadHistorique();
+}
+
+async function loadHistorique() {
+    const container = document.getElementById('historique-content');
+    if (!container) return;
+    container.innerHTML = '<div class="empty-state">Chargement...</div>';
+
+    try {
+        const res = await fetch(`${API}/api/stats/window?hours=${histoPeriodHours}`);
+        const data = await res.json();
+        const stats = data.stats || {};
+
+        const bots = [
+            { key: 'V1', label: 'Bot V1', badge: 'v1-badge', desc: 'strict' },
+            { key: 'V2', label: 'Bot V2', badge: 'v2-badge', desc: 'assoupli' },
+            { key: 'V3', label: 'Bot V3', badge: 'v3-badge', desc: 'quick profit' },
+            { key: 'V4', label: 'Bot V4', badge: 'v4-badge', desc: 'adaptive' },
+        ];
+
+        const periodLabel = histoPeriodHours <= 24 ? '24h'
+            : histoPeriodHours <= 48 ? '2 jours'
+            : histoPeriodHours <= 72 ? '3 jours'
+            : histoPeriodHours <= 96 ? '4 jours'
+            : histoPeriodHours <= 120 ? '5 jours'
+            : histoPeriodHours <= 144 ? '6 jours'
+            : '1 semaine';
+
+        container.innerHTML = bots.map(bot => {
+            const s = stats[bot.key];
+            if (!s || s.total_trades === 0) {
+                return `
+                <div class="histo-card">
+                    <div class="histo-card-header"><span class="${bot.badge}">${bot.key}</span> ${bot.label}</div>
+                    <div class="histo-no-trades">Aucun trade sur ${periodLabel}</div>
+                </div>`;
+            }
+            const pnl = s.total_pnl;
+            const pnlSign = pnl >= 0 ? '+' : '';
+            const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+            return `
+            <div class="histo-card" style="border-top:3px solid ${bot.key === 'V1' ? '#58a6ff' : bot.key === 'V2' ? '#bc8cff' : bot.key === 'V3' ? '#3fb950' : '#39d5ff'}">
+                <div class="histo-card-header"><span class="${bot.badge}">${bot.key}</span> ${bot.label} <span style="font-size:11px;color:var(--text-secondary);font-weight:400">(${bot.desc})</span></div>
+                <div class="histo-pnl-big" style="color:${pnlColor}">${pnlSign}${pnl.toFixed(2)}$</div>
+                <div class="histo-row"><span class="label">Trades</span><span class="value">${s.total_trades}</span></div>
+                <div class="histo-row"><span class="label">Gagnes</span><span class="value" style="color:var(--green)">${s.wins}</span></div>
+                <div class="histo-row"><span class="label">Perdus</span><span class="value" style="color:var(--red)">${s.losses}</span></div>
+                <div class="histo-row"><span class="label">Win Rate</span><span class="value">${s.win_rate}%</span></div>
+                <div class="histo-row"><span class="label">P&L moyen</span><span class="value" style="color:${s.avg_pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${s.avg_pnl >= 0 ? '+' : ''}${s.avg_pnl.toFixed(3)}$</span></div>
+                <div class="histo-row"><span class="label">Meilleur</span><span class="value" style="color:var(--green)">+${s.best_trade.toFixed(2)}$</span></div>
+                <div class="histo-row"><span class="label">Pire</span><span class="value" style="color:var(--red)">${s.worst_trade.toFixed(2)}$</span></div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        console.error('loadHistorique error:', e);
+        container.innerHTML = '<div class="empty-state">Erreur de chargement</div>';
+    }
 }

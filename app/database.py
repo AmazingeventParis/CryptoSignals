@@ -402,6 +402,28 @@ async def get_stats(bot_version: str = None) -> dict:
         }
 
 
+async def get_stats_window(hours: int = 24) -> list[dict]:
+    """Stats par bot pour une fenetre de temps donnee (en heures)."""
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        query = """
+            SELECT bot_version,
+                   COUNT(*) as total_trades,
+                   SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) as wins,
+                   SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) as losses,
+                   COALESCE(SUM(pnl_usd), 0) as total_pnl,
+                   COALESCE(AVG(pnl_usd), 0) as avg_pnl,
+                   COALESCE(MAX(pnl_usd), 0) as best_trade,
+                   COALESCE(MIN(pnl_usd), 0) as worst_trade
+            FROM trades_journal
+            WHERE exit_time >= datetime('now', ? || ' hours')
+            GROUP BY bot_version
+        """
+        cursor = await db.execute(query, (f"-{hours}",))
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
 async def get_pnl_history(bot_version: str = None, days: int = 0) -> list[dict]:
     """P&L cumule dans le temps depuis trades_journal."""
     async with aiosqlite.connect(str(DB_PATH)) as db:
@@ -625,19 +647,16 @@ async def reset_paper_portfolio(initial_balance: float = 100.0, bot_version: str
                 (initial_balance, initial_balance, bot_version),
             )
         else:
-            # Reset tout (retro-compat)
+            # Reset tout
             await db.execute("DELETE FROM paper_portfolio")
             await db.execute("DELETE FROM active_positions")
             await db.execute("DELETE FROM trades_journal")
             await db.execute("DELETE FROM signals")
-            await db.execute(
-                "INSERT INTO paper_portfolio (initial_balance, current_balance, bot_version) VALUES (?, ?, ?)",
-                (initial_balance, initial_balance, "V1"),
-            )
-            await db.execute(
-                "INSERT INTO paper_portfolio (initial_balance, current_balance, bot_version) VALUES (?, ?, ?)",
-                (initial_balance, initial_balance, "V2"),
-            )
+            for bv in ("V1", "V2", "V3", "V4"):
+                await db.execute(
+                    "INSERT INTO paper_portfolio (initial_balance, current_balance, bot_version) VALUES (?, ?, ?)",
+                    (initial_balance, initial_balance, bv),
+                )
         await db.commit()
 
 

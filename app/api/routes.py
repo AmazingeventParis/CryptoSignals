@@ -61,6 +61,28 @@ async def trading_stats(bot_version: str = Query(None)):
     return stats
 
 
+@router.get("/stats/window")
+async def stats_window(hours: int = Query(24, ge=1, le=720)):
+    from app.database import get_stats_window
+    rows = await get_stats_window(hours=hours)
+    result = {}
+    for r in rows:
+        bv = r["bot_version"]
+        total = r["total_trades"]
+        wins = r["wins"]
+        result[bv] = {
+            "total_trades": total,
+            "wins": wins,
+            "losses": r["losses"],
+            "win_rate": round(wins / max(total, 1) * 100, 1),
+            "total_pnl": round(r["total_pnl"], 2),
+            "avg_pnl": round(r["avg_pnl"], 3),
+            "best_trade": round(r["best_trade"], 2),
+            "worst_trade": round(r["worst_trade"], 2),
+        }
+    return {"hours": hours, "stats": result}
+
+
 @router.get("/pnl-history")
 async def pnl_history(
     bot_version: str = Query(None),
@@ -375,7 +397,7 @@ async def paper_reset(bot_version: str = Query(None)):
         await reset_paper_portfolio(100.0)
         for b in bots.values():
             b["paper_trader"]._open_positions.clear()
-        return {"status": "ok", "message": "Portfolios V1+V2 reset a 100$"}
+        return {"status": "ok", "message": "Tous les portfolios reset a 100$"}
 
 
 @router.post("/positions/{position_id}/close")
