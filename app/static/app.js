@@ -21,6 +21,7 @@ let compareChart = null;
 let compareV1Series = null;
 let compareV2Series = null;
 let compareV3Series = null;
+let compareV4Series = null;
 let compareFtSeries = null;
 let comparePeriod = 0;
 
@@ -51,6 +52,7 @@ async function refreshAll() {
         fetchBotData('V1'),
         fetchBotData('V2'),
         fetchBotData('V3'),
+        fetchBotData('V4'),
         fetchTrades(),
         fetchLivePositions(),
         fetchFreqtradeData(),
@@ -62,7 +64,7 @@ async function fetchStatus() {
     try {
         const res = await fetch(`${API}/api/status`);
         const data = await res.json();
-        ['V1', 'V2', 'V3'].forEach(ver => {
+        ['V1', 'V2', 'V3', 'V4'].forEach(ver => {
             const v = ver.toLowerCase();
             const botStatus = data.scanners?.[ver];
             const badge = document.getElementById(`${v}-status`);
@@ -76,7 +78,7 @@ async function fetchStatus() {
             document.getElementById(`${v}-active`).textContent = botStatus?.active_signals || 0;
         });
     } catch {
-        ['v1', 'v2', 'v3'].forEach(v => {
+        ['v1', 'v2', 'v3', 'v4'].forEach(v => {
             const badge = document.getElementById(`${v}-status`);
             badge.textContent = 'offline';
             badge.className = 'badge badge-offline';
@@ -124,18 +126,21 @@ function updateBotSidebar(v, data) {
 
 async function fetchTrades() {
     try {
-        const [v1Res, v2Res, v3Res] = await Promise.all([
+        const [v1Res, v2Res, v3Res, v4Res] = await Promise.all([
             fetch(`${API}/api/trades?limit=30&bot_version=V1`),
             fetch(`${API}/api/trades?limit=30&bot_version=V2`),
             fetch(`${API}/api/trades?limit=30&bot_version=V3`),
+            fetch(`${API}/api/trades?limit=30&bot_version=V4`),
         ]);
         const v1 = await v1Res.json();
         const v2 = await v2Res.json();
         const v3 = await v3Res.json();
+        const v4 = await v4Res.json();
         const allTrades = [
             ...(v1.trades || []).map(t => ({...t, bot_version: t.bot_version || 'V1'})),
             ...(v2.trades || []).map(t => ({...t, bot_version: t.bot_version || 'V2'})),
             ...(v3.trades || []).map(t => ({...t, bot_version: t.bot_version || 'V3'})),
+            ...(v4.trades || []).map(t => ({...t, bot_version: t.bot_version || 'V4'})),
         ];
         allTrades.sort((a, b) => new Date(b.entry_time || b.created_at) - new Date(a.entry_time || a.created_at));
         renderTrades(allTrades);
@@ -218,6 +223,8 @@ function renderSignals(signals, containerId, botVersion) {
             ? '<span class="v1-badge" style="font-size:9px;padding:1px 5px">V1</span>'
             : botVersion === 'V3'
             ? '<span class="v3-badge" style="font-size:9px;padding:1px 5px">V3</span>'
+            : botVersion === 'V4'
+            ? '<span class="v4-badge" style="font-size:9px;padding:1px 5px">V4</span>'
             : '<span class="v2-badge" style="font-size:9px;padding:1px 5px">V2</span>';
 
         return `
@@ -264,7 +271,7 @@ function renderTrades(trades) {
         const pnlClass = (t.pnl_usd || 0) >= 0 ? 'trade-pnl-pos' : 'trade-pnl-neg';
         const time = new Date(t.entry_time || t.created_at).toLocaleString('fr-FR');
         const bv = t.bot_version || 'V2';
-        const badgeClass = bv === 'V1' ? 'v1-badge' : bv === 'V3' ? 'v3-badge' : 'v2-badge';
+        const badgeClass = bv === 'V1' ? 'v1-badge' : bv === 'V3' ? 'v3-badge' : bv === 'V4' ? 'v4-badge' : 'v2-badge';
         return `
         <div class="trade-card">
             <div>
@@ -1005,6 +1012,7 @@ updateCandleCountdown();
 let positionsDataV1 = [];
 let positionsDataV2 = [];
 let positionsDataV3 = [];
+let positionsDataV4 = [];
 let livePrices = {};      // symbol -> prix live
 let posMexcWs = null;
 let posMexcReconnect = null;
@@ -1012,19 +1020,22 @@ let posSubscribedSymbols = new Set();
 
 async function fetchLivePositions() {
     try {
-        const [v1Res, v2Res, v3Res] = await Promise.all([
+        const [v1Res, v2Res, v3Res, v4Res] = await Promise.all([
             fetch(`${API}/api/positions?bot_version=V1`),
             fetch(`${API}/api/positions?bot_version=V2`),
             fetch(`${API}/api/positions?bot_version=V3`),
+            fetch(`${API}/api/positions?bot_version=V4`),
         ]);
         const v1 = await v1Res.json();
         const v2 = await v2Res.json();
         const v3 = await v3Res.json();
+        const v4 = await v4Res.json();
         positionsDataV1 = (v1.positions || []).filter(p => p.state !== 'closed');
         positionsDataV2 = (v2.positions || []).filter(p => p.state !== 'closed');
         positionsDataV3 = (v3.positions || []).filter(p => p.state !== 'closed');
+        positionsDataV4 = (v4.positions || []).filter(p => p.state !== 'closed');
 
-        const all = [...positionsDataV1, ...positionsDataV2, ...positionsDataV3];
+        const all = [...positionsDataV1, ...positionsDataV2, ...positionsDataV3, ...positionsDataV4];
         if (all.length > 0) {
             connectPosMexcWs();
             updatePositionsUI();
@@ -1033,16 +1044,18 @@ async function fetchLivePositions() {
             document.getElementById('v1-positions-live').innerHTML = '';
             document.getElementById('v2-positions-live').innerHTML = '';
             document.getElementById('v3-positions-live').innerHTML = '';
+            document.getElementById('v4-positions-live').innerHTML = '';
         }
     } catch {
         document.getElementById('v1-positions-live').innerHTML = '';
         document.getElementById('v2-positions-live').innerHTML = '';
         document.getElementById('v3-positions-live').innerHTML = '';
+        document.getElementById('v4-positions-live').innerHTML = '';
     }
 }
 
 function connectPosMexcWs() {
-    const allPositions = [...positionsDataV1, ...positionsDataV2, ...positionsDataV3];
+    const allPositions = [...positionsDataV1, ...positionsDataV2, ...positionsDataV3, ...positionsDataV4];
     const symbols = new Set(allPositions.map(p => p.symbol));
     const mexcSymbols = new Map();
     symbols.forEach(s => {
@@ -1104,7 +1117,7 @@ function connectPosMexcWs() {
         if (posMexcWs?._ping) clearInterval(posMexcWs._ping);
         posMexcWs = null;
         // Reconnecter si on a encore des positions
-        if (positionsDataV1.length > 0 || positionsDataV2.length > 0 || positionsDataV3.length > 0) {
+        if (positionsDataV1.length > 0 || positionsDataV2.length > 0 || positionsDataV3.length > 0 || positionsDataV4.length > 0) {
             posMexcReconnect = setTimeout(connectPosMexcWs, 2000);
         }
     };
@@ -1144,6 +1157,13 @@ function updatePositionsUI() {
     });
     v3Result.sort((a, b) => (b.total_pnl || 0) - (a.total_pnl || 0));
     renderLivePositions(v3Result, 'v3-positions-live');
+
+    const v4Result = positionsDataV4.map(p => {
+        const cur = livePrices[p.symbol] || p.entry_price;
+        return calcLivePnl(p, cur);
+    });
+    v4Result.sort((a, b) => (b.total_pnl || 0) - (a.total_pnl || 0));
+    renderLivePositions(v4Result, 'v4-positions-live');
 }
 
 function calcLivePnl(pos, currentPrice) {
@@ -1260,7 +1280,7 @@ async function closePosition(posId, btn) {
     // Feedback instantane
     if (btn) { btn.disabled = true; btn.textContent = '...'; }
     // Envoyer le prix live du WS pour eviter un appel MEXC lent
-    const allPos = [...positionsDataV1, ...positionsDataV2, ...positionsDataV3];
+    const allPos = [...positionsDataV1, ...positionsDataV2, ...positionsDataV3, ...positionsDataV4];
     const pos = allPos.find(p => p.id === posId);
     const livePrice = pos ? (livePrices[pos.symbol] || 0) : 0;
     try {
@@ -1945,19 +1965,22 @@ function renderFreqtradeTrades(trades) {
 
 async function loadCompareData() {
     try {
-        const [v1Hist, v2Hist, v3Hist, v1Port, v2Port, v3Port, ftStats, ftTrades] = await Promise.all([
+        const [v1Hist, v2Hist, v3Hist, v4Hist, v1Port, v2Port, v3Port, v4Port, ftStats, ftTrades] = await Promise.all([
             fetch(`${API}/api/pnl-history?bot_version=V1&days=${comparePeriod}`).then(r => r.json()).catch(() => ({ history: [] })),
             fetch(`${API}/api/pnl-history?bot_version=V2&days=${comparePeriod}`).then(r => r.json()).catch(() => ({ history: [] })),
             fetch(`${API}/api/pnl-history?bot_version=V3&days=${comparePeriod}`).then(r => r.json()).catch(() => ({ history: [] })),
+            fetch(`${API}/api/pnl-history?bot_version=V4&days=${comparePeriod}`).then(r => r.json()).catch(() => ({ history: [] })),
             fetch(`${API}/api/paper/portfolio?bot_version=V1`).then(r => r.json()).catch(() => ({})),
             fetch(`${API}/api/paper/portfolio?bot_version=V2`).then(r => r.json()).catch(() => ({})),
             fetch(`${API}/api/paper/portfolio?bot_version=V3`).then(r => r.json()).catch(() => ({})),
+            fetch(`${API}/api/paper/portfolio?bot_version=V4`).then(r => r.json()).catch(() => ({})),
             fetch(`${API}/api/freqtrade/stats`).then(r => r.json()).catch(() => ({})),
             fetch(`${API}/api/freqtrade/trades?limit=200`).then(r => r.json()).catch(() => ({ trades: [] })),
         ]);
         updateCompareStats('v1', v1Port);
         updateCompareStats('v2', v2Port);
         updateCompareStats('v3', v3Port);
+        updateCompareStats('v4', v4Port);
         updateCompareFtStats(ftStats);
 
         // Reconstruire l'historique P&L FT depuis les trades fermes
@@ -1969,8 +1992,8 @@ async function loadCompareData() {
         }
 
         renderCompareChart(
-            v1Hist.history || [], v2Hist.history || [], v3Hist.history || [], ftHistory,
-            v1Port.initial_balance || 100, v2Port.initial_balance || 100, v3Port.initial_balance || 100
+            v1Hist.history || [], v2Hist.history || [], v3Hist.history || [], v4Hist.history || [], ftHistory,
+            v1Port.initial_balance || 100, v2Port.initial_balance || 100, v3Port.initial_balance || 100, v4Port.initial_balance || 100
         );
     } catch (e) {
         console.error('loadCompareData error:', e);
@@ -2038,7 +2061,7 @@ function buildFtPnlHistory(trades, currentBalance, totalPnl) {
     return history;
 }
 
-function renderCompareChart(v1Data, v2Data, v3Data, ftData, v1Base, v2Base, v3Base) {
+function renderCompareChart(v1Data, v2Data, v3Data, v4Data, ftData, v1Base, v2Base, v3Base, v4Base) {
     const container = document.getElementById('compare-chart-container');
     if (!container) return;
 
@@ -2050,7 +2073,7 @@ function renderCompareChart(v1Data, v2Data, v3Data, ftData, v1Base, v2Base, v3Ba
     container.innerHTML = '';
 
     // Cas vide
-    if (!v1Data.length && !v2Data.length && !v3Data.length && !ftData.length) {
+    if (!v1Data.length && !v2Data.length && !v3Data.length && !v4Data.length && !ftData.length) {
         container.innerHTML = '<div class="compare-empty">Pas encore de trades — les courbes apparaitront ici</div>';
         return;
     }
@@ -2091,6 +2114,14 @@ function renderCompareChart(v1Data, v2Data, v3Data, ftData, v1Base, v2Base, v3Ba
         priceFormat: { type: 'custom', formatter: (p) => '$' + p.toFixed(2) },
     });
 
+    // V4 line (cyan)
+    compareV4Series = compareChart.addLineSeries({
+        color: '#39d5ff',
+        lineWidth: 2,
+        title: 'V4',
+        priceFormat: { type: 'custom', formatter: (p) => '$' + p.toFixed(2) },
+    });
+
     // FT line (orange vif)
     compareFtSeries = compareChart.addLineSeries({
         color: '#f0883e',
@@ -2125,6 +2156,7 @@ function renderCompareChart(v1Data, v2Data, v3Data, ftData, v1Base, v2Base, v3Ba
     const v1Points = mapData(v1Data, v1Base);
     const v2Points = mapData(v2Data, v2Base);
     const v3Points = mapData(v3Data, v3Base || 100);
+    const v4Points = mapData(v4Data, v4Base || 100);
     // FT: balance initiale estimee = balance actuelle - pnl total
     const ftBase = ftData.length > 0 ? 100 : 100; // normalise a 100$ pour comparaison
     const ftPoints = mapData(ftData, ftBase);
@@ -2132,6 +2164,7 @@ function renderCompareChart(v1Data, v2Data, v3Data, ftData, v1Base, v2Base, v3Ba
     if (v1Points.length) compareV1Series.setData(v1Points);
     if (v2Points.length) compareV2Series.setData(v2Points);
     if (v3Points.length) compareV3Series.setData(v3Points);
+    if (v4Points.length) compareV4Series.setData(v4Points);
     try {
         if (ftPoints.length) compareFtSeries.setData(ftPoints);
     } catch (e) {
@@ -2139,7 +2172,7 @@ function renderCompareChart(v1Data, v2Data, v3Data, ftData, v1Base, v2Base, v3Ba
     }
 
     // Baseline: ligne plate a 100$ sur toute la plage
-    const allTimes = [...v1Points, ...v2Points, ...v3Points, ...ftPoints].map(p => p.time).filter(Boolean);
+    const allTimes = [...v1Points, ...v2Points, ...v3Points, ...v4Points, ...ftPoints].map(p => p.time).filter(Boolean);
     if (allTimes.length >= 2) {
         const minT = Math.min(...allTimes);
         const maxT = Math.max(...allTimes);
