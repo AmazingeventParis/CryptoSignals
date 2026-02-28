@@ -61,10 +61,12 @@ scalping:
       - divergence
     confirmation_candles: 1
 
+  max_loss_usd: 0.25    # cap absolu par trade scalping (avant SL)
+
   stop_loss:
     method: "atr"
-    atr_multiplier: 1.8
-    max_stop_pct: 0.7
+    atr_multiplier: 1.5
+    max_stop_pct: 0.5
 
   take_profit:
     tp1_rr: 1.0
@@ -116,6 +118,8 @@ swing:
       - ema_bounce
       - momentum
     confirmation_candles: 1
+
+  max_loss_usd: 0.40    # cap absolu par trade swing (avant SL)
 
   stop_loss:
     method: "structure"
@@ -249,7 +253,7 @@ fees:
 sizing:
   base_pct: 8          # % du solde par trade
   min_margin: 3         # marge minimum $
-  max_margin: 20        # marge maximum $
+  max_margin: 15        # marge maximum $ (reduit pour limiter pertes)
 
 # --- Trailing TP apres TP3 ---
 trailing_tp:

@@ -341,7 +341,10 @@ class PositionMonitor:
                 del self._positions[pid]
 
     async def _dynamic_sl_adjust(self):
-        """Ajuste dynamiquement le SL si la volatilite augmente (avant TP1 seulement)."""
+        """Ajuste dynamiquement le SL si la volatilite augmente (avant TP1 seulement).
+        V4: desactive - max_loss_usd cap remplace le widening dynamique."""
+        if self.bot_version == "V4":
+            return
         for pos_id, pos in list(self._positions.items()):
             if pos.get("state") == "closed" or pos.get("tp1_hit"):
                 continue
