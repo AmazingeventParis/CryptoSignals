@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=73">
+    <link rel="stylesheet" href="/static/style.css?v=74">
 </head>
 <body>
     <div id="app">
@@ -148,6 +148,7 @@
                 <button class="tab" onclick="switchTab('compare')"><span class="compare-badge-sm">VS</span> Comparaison</button>
                 <button class="tab" onclick="switchTab('historique')">Historique</button>
                 <button class="tab" onclick="switchTab('pairs')">Paires</button>
+                <button class="tab" onclick="switchTab('brain')"><span class="v4-badge-sm">V4</span> Brain</button>
             </div>
 
             <!-- V1 Tab -->
@@ -331,6 +332,41 @@
                     <div class="empty-state">Chargement...</div>
                 </div>
             </div>
+
+            <!-- Brain Tab (V4 Adaptive Learning) -->
+            <div id="tab-brain" class="tab-content">
+                <div class="brain-section">
+                    <h3>Dimensions d'Apprentissage (9 axes)</h3>
+                    <div id="brain-dimensions" class="brain-dimensions-grid">
+                        <div class="empty-state">Chargement...</div>
+                    </div>
+                </div>
+                <div class="brain-section">
+                    <h3>Edge Decay Monitor</h3>
+                    <div id="brain-decay" class="brain-decay-container">
+                        <div class="empty-state">Chargement...</div>
+                    </div>
+                </div>
+                <div class="brain-section">
+                    <h3>Journal IA — Decisions & Autocorrections</h3>
+                    <div id="brain-journal" class="brain-journal-list">
+                        <div class="empty-state">Chargement...</div>
+                    </div>
+                </div>
+                <div class="brain-section">
+                    <h3>Historique Trade Contexts</h3>
+                    <div class="brain-filters">
+                        <select id="brain-ctx-days" onchange="loadBrainData()">
+                            <option value="7">7 jours</option>
+                            <option value="30" selected>30 jours</option>
+                            <option value="0">Tout</option>
+                        </select>
+                    </div>
+                    <div id="brain-contexts" class="brain-contexts-list">
+                        <div class="empty-state">Chargement...</div>
+                    </div>
+                </div>
+            </div>
         </main>
         </div>
 
@@ -395,6 +431,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=73"></script>
+    <script src="/static/app.js?v=74"></script>
 </body>
 </html>

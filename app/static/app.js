@@ -328,6 +328,7 @@ function switchTab(tab) {
     }
     if (tab === 'compare') loadCompareData();
     if (tab === 'historique') loadHistorique();
+    if (tab === 'brain') loadBrainData();
 }
 
 // --- Charts ---
@@ -2364,4 +2365,309 @@ async function fetchV4LearningPanel() {
     } catch (e) {
         console.error('fetchV4LearningPanel error:', e);
     }
+}
+
+// ============================================
+// V4 BRAIN TAB — Full Adaptive Learning Dashboard
+// ============================================
+
+async function loadBrainData() {
+    const days = document.getElementById('brain-ctx-days')?.value || 30;
+
+    const [weightsRes, decayRes, ctxRes, calRes] = await Promise.all([
+        fetch(`${API}/api/learning/weights?bot_version=V4`).then(r => r.json()).catch(() => ({ weights: [] })),
+        fetch(`${API}/api/learning/edge-decay?bot_version=V4`).then(r => r.json()).catch(() => ({ alerts: [] })),
+        fetch(`${API}/api/learning/context?bot_version=V4&days=${days}&limit=100`).then(r => r.json()).catch(() => ({ contexts: [] })),
+        fetch(`${API}/api/learning/calibration?bot_version=V4`).then(r => r.json()).catch(() => ({ calibration: [] })),
+    ]);
+
+    renderBrainDimensions(weightsRes.weights || [], calRes.calibration || []);
+    renderBrainDecay(decayRes.alerts || []);
+    renderBrainJournal(weightsRes.weights || [], decayRes.alerts || []);
+    renderBrainContexts(ctxRes.contexts || []);
+}
+
+function renderBrainDimensions(weights, calibration) {
+    const el = document.getElementById('brain-dimensions');
+    if (!el) return;
+
+    if (!weights.length && !calibration.length) {
+        el.innerHTML = '<div class="empty-state">Pas encore de donnees d\'apprentissage</div>';
+        return;
+    }
+
+    // Group weights by dimension
+    const dims = {};
+    weights.forEach(w => {
+        if (!dims[w.dimension]) dims[w.dimension] = [];
+        dims[w.dimension].push(w);
+    });
+
+    // Sort each dimension's values by absolute modifier
+    Object.values(dims).forEach(arr => arr.sort((a, b) => Math.abs(b.weight_modifier) - Math.abs(a.weight_modifier)));
+
+    let html = '';
+
+    // Calibration section
+    if (calibration.length) {
+        html += `<div class="brain-dim-group">
+            <div class="brain-dim-header">
+                <span class="brain-dim-name">Calibration Score</span>
+                <span class="brain-dim-count">${calibration.length} tranches</span>
+            </div>`;
+        calibration.forEach(c => {
+            const wr7 = c.win_rate_7d || 0;
+            const wrAll = c.win_rate_all || 0;
+            const wrColor = wr7 >= 55 ? 'var(--green)' : wr7 < 45 ? 'var(--red)' : 'var(--text)';
+            html += `<div class="brain-dim-row">
+                <span class="brain-dim-val">${c.score_range}</span>
+                <span class="brain-wr" style="color:${wrColor}">${wr7.toFixed(0)}% 7j</span>
+                <span class="brain-wr">${wrAll.toFixed(0)}% all</span>
+                <span class="brain-sample">(${c.sample_size || 0})</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+
+    // Each dimension
+    const dimNames = {
+        setup: 'Setup Type', symbol: 'Symbol', mode: 'Mode', regime: 'Regime',
+        hour: 'Heure', score_range: 'Score Range', direction: 'Direction',
+        mtf: 'MTF Confluence', candle_pattern: 'Candle Pattern'
+    };
+
+    Object.entries(dims).forEach(([dim, values]) => {
+        const label = dimNames[dim] || dim;
+        html += `<div class="brain-dim-group">
+            <div class="brain-dim-header">
+                <span class="brain-dim-name">${label}</span>
+                <span class="brain-dim-count">${values.length} valeurs</span>
+            </div>`;
+
+        values.forEach(w => {
+            const mod = w.weight_modifier || 0;
+            const modClass = mod > 0 ? 'positive' : mod < 0 ? 'negative' : 'neutral';
+            const modStr = mod > 0 ? `+${mod.toFixed(1)}` : mod.toFixed(1);
+            const wr7 = w.win_rate_7d || 0;
+            const wr30 = w.win_rate_30d || 0;
+            const wrAll = w.win_rate_all || 0;
+            const conf = w.confidence || 0;
+            const confPct = Math.min(conf * 100, 100).toFixed(0);
+
+            html += `<div class="brain-dim-row">
+                <span class="brain-dim-val" title="${dim}">${w.dimension_value}</span>
+                <span class="brain-mod ${modClass}">${modStr}</span>
+                <span class="brain-wr" style="color:${wr7 >= 55 ? 'var(--green)' : wr7 < 45 ? 'var(--red)' : 'var(--text)'}">${wr7.toFixed(0)}% 7j</span>
+                <span class="brain-wr">${wr30.toFixed(0)}% 30j</span>
+                <span class="brain-wr">${wrAll.toFixed(0)}% all</span>
+                <span class="brain-sample">${w.sample_size || 0}</span>
+                <div class="brain-conf-bar"><div class="brain-conf-fill" style="width:${confPct}%"></div></div>
+            </div>`;
+        });
+
+        html += '</div>';
+    });
+
+    el.innerHTML = html;
+}
+
+function renderBrainDecay(alerts) {
+    const el = document.getElementById('brain-decay');
+    if (!el) return;
+
+    if (!alerts.length) {
+        el.innerHTML = '<div class="brain-decay-ok">Aucune alerte — tous les edges sont stables</div>';
+        return;
+    }
+
+    const severe = alerts.filter(a => a.drop >= 25).length;
+    const warning = alerts.length - severe;
+
+    let html = `<div class="brain-decay-summary">
+        <span class="brain-decay-total">${alerts.length} dimension${alerts.length > 1 ? 's' : ''} en decay</span>`;
+    if (severe > 0) html += `<span class="brain-badge-severe">${severe} severe</span>`;
+    if (warning > 0) html += `<span class="brain-badge-warning">${warning} warning</span>`;
+    if (alerts.length >= 3) html += `<span class="brain-badge-suppress">SIGNAUX POTENTIELLEMENT SUPPRIMES</span>`;
+    html += '</div>';
+
+    alerts.sort((a, b) => b.drop - a.drop);
+
+    alerts.forEach(a => {
+        const severity = a.drop >= 25 ? 'severe' : 'warning';
+        html += `<div class="brain-decay-alert ${severity}">
+            <div class="brain-decay-info">
+                <span class="brain-decay-dim">${a.dimension}: ${a.value}</span>
+                <span class="brain-decay-wr">${(a.wr_7d || 0).toFixed(0)}% → ${(a.wr_30d || 0).toFixed(0)}%</span>
+            </div>
+            <span class="brain-decay-drop">-${(a.drop || 0).toFixed(0)}%</span>
+            <span class="brain-badge-${severity}">${severity}</span>
+        </div>`;
+    });
+
+    el.innerHTML = html;
+}
+
+function renderBrainJournal(weights, alerts) {
+    const el = document.getElementById('brain-journal');
+    if (!el) return;
+
+    const entries = [];
+
+    // Generate journal entries from non-zero weights
+    (weights || []).forEach(w => {
+        if (w.weight_modifier === 0 || (w.sample_size || 0) < 3) return;
+        const mod = w.weight_modifier;
+        const wr = w.win_rate_all || 0;
+        const samples = w.sample_size || 0;
+        const action = mod > 0 ? 'boost' : 'penalise';
+        const icon = mod > 0 ? '+' : '-';
+
+        entries.push({
+            impact: Math.abs(mod),
+            type: action,
+            text: `${w.dimension_value} ${mod > 0 ? '+' : ''}${mod.toFixed(1)}pts (WR ${wr.toFixed(0)}% sur ${samples} trades)`,
+            action: mod > 0 ? 'boost signal' : 'penalise signal',
+            dim: w.dimension
+        });
+    });
+
+    // Generate entries from edge decay alerts
+    (alerts || []).forEach(a => {
+        entries.push({
+            impact: a.drop || 0,
+            type: 'decay',
+            text: `${a.dimension}=${a.value} edge_decay -${(a.drop || 0).toFixed(0)}% (${(a.wr_30d || 0).toFixed(0)}%→${(a.wr_7d || 0).toFixed(0)}%)`,
+            action: 'auto-penalise',
+            dim: a.dimension
+        });
+    });
+
+    // Check for signal suppression (3+ decayed dimensions)
+    if ((alerts || []).length >= 3) {
+        entries.push({
+            impact: 999,
+            type: 'suppress',
+            text: `${alerts.length} dimensions en decay simultanee`,
+            action: 'SIGNAUX SUPPRIMES',
+            dim: 'global'
+        });
+    }
+
+    // Sort by impact descending
+    entries.sort((a, b) => b.impact - a.impact);
+
+    if (!entries.length) {
+        el.innerHTML = '<div class="empty-state">Aucune decision IA enregistree</div>';
+        return;
+    }
+
+    el.innerHTML = entries.map(e => {
+        const iconClass = e.type === 'boost' ? 'journal-boost' :
+                         e.type === 'penalise' ? 'journal-penalise' :
+                         e.type === 'decay' ? 'journal-decay' : 'journal-suppress';
+        const icon = e.type === 'boost' ? '&#x25B2;' :
+                    e.type === 'penalise' ? '&#x25BC;' :
+                    e.type === 'decay' ? '&#x26A0;' : '&#x26D4;';
+        return `<div class="brain-journal-entry ${iconClass}">
+            <span class="journal-icon">${icon}</span>
+            <span class="journal-text">${e.text}</span>
+            <span class="journal-action">${e.action}</span>
+        </div>`;
+    }).join('');
+}
+
+function renderBrainContexts(contexts) {
+    const el = document.getElementById('brain-contexts');
+    if (!el) return;
+
+    if (!contexts.length) {
+        el.innerHTML = '<div class="empty-state">Aucun contexte de trade enregistre</div>';
+        return;
+    }
+
+    const reasonBadge = (reason) => {
+        const map = {
+            tp1: 'ctx-tp', tp2: 'ctx-tp', tp3: 'ctx-tp',
+            sl: 'ctx-sl', stop_loss: 'ctx-sl',
+            profit_giveback: 'ctx-giveback', smart_exit: 'ctx-giveback',
+            stale: 'ctx-stale', timeout: 'ctx-stale', expired: 'ctx-stale',
+            trailing_stop: 'ctx-tp', breakeven: 'ctx-stale'
+        };
+        return map[reason] || 'ctx-stale';
+    };
+
+    const formatDuration = (secs) => {
+        if (!secs) return '--';
+        if (secs < 60) return `${secs}s`;
+        if (secs < 3600) return `${Math.floor(secs/60)}m`;
+        return `${Math.floor(secs/3600)}h${Math.floor((secs%3600)/60)}m`;
+    };
+
+    let html = `<div class="brain-ctx-table">
+        <div class="brain-ctx-header-row">
+            <span>Date</span><span>Symbol</span><span>Mode</span><span>Setup</span>
+            <span>Dir</span><span>Regime</span><span>Score</span><span>PnL</span>
+            <span>Raison</span><span>Duree</span>
+        </div>`;
+
+    contexts.forEach((ctx, i) => {
+        const pnl = ctx.pnl_usd || 0;
+        const pnlClass = pnl >= 0 ? 'ctx-pnl-pos' : 'ctx-pnl-neg';
+        const pnlStr = pnl >= 0 ? `+${pnl.toFixed(2)}` : pnl.toFixed(2);
+        const exitDate = ctx.exit_time ? new Date(ctx.exit_time.endsWith('Z') ? ctx.exit_time : ctx.exit_time + 'Z') : null;
+        const dateStr = exitDate ? exitDate.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) + ' ' + exitDate.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'}) : '--';
+        const reason = ctx.close_reason || '--';
+        const badgeCls = reasonBadge(reason);
+
+        html += `<div class="brain-ctx-row" onclick="toggleCtxDetail(${i})">
+            <span>${dateStr}</span>
+            <span class="ctx-symbol">${ctx.symbol || '--'}</span>
+            <span>${ctx.mode || '--'}</span>
+            <span>${ctx.setup_type || '--'}</span>
+            <span class="${ctx.direction === 'long' ? 'ctx-long' : 'ctx-short'}">${ctx.direction || '--'}</span>
+            <span>${ctx.market_regime || '--'}</span>
+            <span>${(ctx.final_score || 0).toFixed(0)}</span>
+            <span class="${pnlClass}">$${pnlStr}</span>
+            <span class="ctx-reason-badge ${badgeCls}">${reason}</span>
+            <span>${formatDuration(ctx.duration_seconds)}</span>
+        </div>
+        <div class="brain-ctx-detail" id="ctx-detail-${i}" style="display:none">
+            <div class="ctx-detail-grid">
+                <div class="ctx-detail-section">
+                    <h5>Scores</h5>
+                    <div class="ctx-detail-row"><span>Final</span><span>${(ctx.final_score || 0).toFixed(1)}</span></div>
+                    <div class="ctx-detail-row"><span>Tradeability</span><span>${(ctx.tradeability_score || 0).toFixed(1)}</span></div>
+                    <div class="ctx-detail-row"><span>Direction</span><span>${(ctx.direction_score || 0).toFixed(1)}</span></div>
+                    <div class="ctx-detail-row"><span>Setup</span><span>${(ctx.setup_score || 0).toFixed(1)}</span></div>
+                    <div class="ctx-detail-row"><span>Sentiment</span><span>${(ctx.sentiment_score || 0).toFixed(1)}</span></div>
+                </div>
+                <div class="ctx-detail-section">
+                    <h5>Indicateurs</h5>
+                    <div class="ctx-detail-row"><span>RSI</span><span>${(ctx.rsi || 0).toFixed(1)}</span></div>
+                    <div class="ctx-detail-row"><span>ADX</span><span>${(ctx.adx || 0).toFixed(1)}</span></div>
+                    <div class="ctx-detail-row"><span>ATR ratio</span><span>${(ctx.atr_ratio || 0).toFixed(3)}</span></div>
+                    <div class="ctx-detail-row"><span>BB width</span><span>${(ctx.bb_bandwidth || 0).toFixed(4)}</span></div>
+                    <div class="ctx-detail-row"><span>Vol ratio</span><span>${(ctx.volume_ratio || 0).toFixed(2)}</span></div>
+                    <div class="ctx-detail-row"><span>VWAP dist</span><span>${(ctx.vwap_distance_pct || 0).toFixed(3)}%</span></div>
+                </div>
+                <div class="ctx-detail-section">
+                    <h5>Performance</h5>
+                    <div class="ctx-detail-row"><span>Max profit</span><span style="color:var(--green)">+$${(ctx.max_profit_usd || 0).toFixed(3)}</span></div>
+                    <div class="ctx-detail-row"><span>Max DD</span><span style="color:var(--red)">-$${(ctx.max_drawdown_usd || 0).toFixed(3)}</span></div>
+                    <div class="ctx-detail-row"><span>Max profit %</span><span style="color:var(--green)">${(ctx.max_profit_pct || 0).toFixed(2)}%</span></div>
+                    <div class="ctx-detail-row"><span>Max DD %</span><span style="color:var(--red)">${(ctx.max_drawdown_pct || 0).toFixed(2)}%</span></div>
+                    <div class="ctx-detail-row"><span>MTF conf</span><span>${(ctx.mtf_confluence || 0).toFixed(2)}</span></div>
+                    <div class="ctx-detail-row"><span>Candle</span><span>${ctx.candle_pattern || 'none'}</span></div>
+                </div>
+            </div>
+        </div>`;
+    });
+
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+function toggleCtxDetail(idx) {
+    const el = document.getElementById(`ctx-detail-${idx}`);
+    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
