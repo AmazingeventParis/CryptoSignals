@@ -257,6 +257,8 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
         + sentiment_normalized * w_sent
     )
 
+    min_score = mode_cfg["entry"]["min_score"]
+
     # V4 ONLY: Gate base score BEFORE modifiers to prevent inflation
     if is_v4:
         base_score = max(0, min(100, final_score))
@@ -299,7 +301,6 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
 
     final_score = max(0, min(100, final_score))
 
-    min_score = mode_cfg["entry"]["min_score"]
     if final_score < min_score:
         return _no_trade(
             symbol, mode, f"Score {final_score} < {min_score} minimum",
