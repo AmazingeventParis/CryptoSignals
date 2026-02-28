@@ -77,10 +77,10 @@ def regime_score_modifier(regime: str, setup_type: str, confidence: float = 1.0)
     base = 0
 
     if regime == "volatile":
-        base = -15
+        base = -5
     elif regime == "ranging":
         if setup_type == "breakout":
-            base = -12
+            base = -5
         elif setup_type == "retest":
             base = 5
     elif regime == "trending":

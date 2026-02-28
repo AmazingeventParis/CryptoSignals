@@ -65,7 +65,7 @@ class PaperTrader:
             base_pct = sizing_cfg.get("base_pct", 8) / 100
             avg_margin = portfolio["current_balance"] * base_pct
             avg_margin = max(avg_margin, sizing_cfg.get("min_margin", 3))
-            max_pos = max(2, min(6, int(portfolio["current_balance"] * 0.50 / avg_margin)))
+            max_pos = max(3, min(8, int(portfolio["current_balance"] * 0.60 / avg_margin)))
         else:
             max_pos = MAX_OPEN
 
@@ -81,13 +81,14 @@ class PaperTrader:
                     logger.debug(f"[{self.bot_version}] Paper: deja une position {signal['symbol']} {signal['direction']}")
                     return False
 
-        # V4 only: Anti-correlation guard: max 3 positions dans la meme direction
+        # V4 only: Anti-correlation guard: max N positions dans la meme direction
         if self.bot_version == "V4" and self._position_monitor:
+            max_same_dir = self.settings.get("anti_correlation", {}).get("max_same_direction", 5)
             same_dir_count = sum(
                 1 for p in self._position_monitor._positions.values()
                 if p.get("state") != "closed" and p.get("direction") == signal["direction"]
             )
-            if same_dir_count >= 3:
+            if same_dir_count >= max_same_dir:
                 logger.info(
                     f"[{self.bot_version}] Anti-correlation: {same_dir_count} {signal['direction'].upper()} "
                     f"deja ouvertes, skip {signal['symbol']}"
@@ -102,21 +103,6 @@ class PaperTrader:
                 )
                 if not allowed:
                     logger.info(f"[{self.bot_version}] {reason}")
-                    return False
-
-        # V4: Fee gate — skip if TP1 distance % < round-trip fees
-        if self.bot_version == "V4":
-            entry_price = signal.get("entry_price", 0)
-            tp1 = signal.get("tp1", 0)
-            if entry_price > 0 and tp1 != 0:
-                tp1_dist_pct = abs(tp1 - entry_price) / entry_price * 100
-                taker_pct = self.settings.get("fees", {}).get("taker_pct", 0.06)
-                fees_rt_pct = taker_pct * 2  # round-trip fees in %
-                if tp1_dist_pct < fees_rt_pct:
-                    logger.info(
-                        f"[{self.bot_version}] FEE GATE: skip {signal['symbol']} {signal.get('mode','')} "
-                        f"TP1={tp1_dist_pct:.4f}% < fees {fees_rt_pct:.4f}%"
-                    )
                     return False
 
         portfolio = await get_paper_portfolio(self.bot_version)

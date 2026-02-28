@@ -31,8 +31,8 @@ DIMENSIONS = [
 ]
 
 CACHE_REFRESH_SECONDS = 120  # Refresh cache toutes les 2 minutes
-MIN_TRADES_FOR_MODIFIER = 5
-MODIFIER_CAP_MIN = -20
+MIN_TRADES_FOR_MODIFIER = 10
+MODIFIER_CAP_MIN = -10
 MODIFIER_CAP_MAX = 10
 
 
@@ -129,11 +129,11 @@ class AdaptiveLearner:
                 total += mod
                 reasons.append(f"{dim}={val} {mod:+.0f}pts (WR {w.get('win_rate_7d', 0):.0f}%)")
 
-            # Edge decay auto-penalty: -5 pts per decaying dimension
+            # Edge decay auto-penalty: -2 pts per decaying dimension
             if key in decayed_keys:
-                total -= 5
+                total -= 2
                 decay_count += 1
-                reasons.append(f"{dim}={val} edge_decay -5pts")
+                reasons.append(f"{dim}={val} edge_decay -2pts")
 
         # 3+ dimensions in decay = suppress signal
         signal_suppressed = decay_count >= 3

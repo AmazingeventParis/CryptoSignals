@@ -284,13 +284,6 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
                 "mtf_confluence": mtf_confluence,
                 "candle_pattern": _candle_pattern,
             }
-            # Check edge decay suppression
-            if adaptive_learner.is_signal_suppressed(signal_ctx):
-                return _no_trade(
-                    symbol, mode,
-                    "Signal supprime: trop de dimensions en edge decay",
-                    direction["signals"], tradeability["score"]
-                )
             learning_modifier, learning_reasons = adaptive_learner.get_total_modifier(signal_ctx)
             final_score += learning_modifier
 
