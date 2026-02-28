@@ -228,11 +228,10 @@ swing_neutral_allowed: false
 anti_correlation:
   max_same_direction: 5       # max positions dans la meme direction
 
-# --- Fee-aware exits ---
-fee_exit:
-  min_profit_multiplier: 1.5  # min_profit = fees * 1.5
-  quick_exit_seconds: 180     # si profit > fees*2 apres 180s → close
-  quick_exit_fee_mult: 1.2    # seuil quick exit: net > fees * 0.2 (juste au-dessus du breakeven)
+# --- Profit Giveback Protection ---
+profit_protection:
+  activation_fee_mult: 3.0    # active quand peak > fees * 3 (~$0.18)
+  giveback_pct: 50            # ferme si >50% du peak rendu
 
 # --- V4 Features ---
 v4_features:

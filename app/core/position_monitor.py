@@ -227,6 +227,15 @@ class PositionMonitor:
                         self._processing.discard(pos_id)
                     continue
 
+                # V4: Profit giveback protection — secure gains when trade reverses
+                if self._check_profit_giveback(pos, current_pnl_track):
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_profit_giveback_close(pos, price, current_pnl_track)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
+
             direction = pos["direction"]
 
             # --- Quick profit / max loss check (V3) ---
@@ -599,18 +608,13 @@ class PositionMonitor:
     # --- Quick profit (V3) ---
 
     def _get_min_profit_usd(self, pos: dict) -> float:
+        # V4: disabled — replaced by profit giveback protection
+        if self.bot_version == "V4":
+            return 0
+
         mode = pos.get("mode", "scalping")
         mode_cfg = self.settings.get(mode, {}) if self.settings else {}
-        fixed_min = mode_cfg.get("min_profit_usd", 0)
-
-        # V4: Fee-aware min profit = max(fees * multiplier, fixed_min, $0.05)
-        if self.bot_version == "V4" and self.settings:
-            fee_cfg = self.settings.get("fee_exit", {})
-            mult = fee_cfg.get("min_profit_multiplier", 1.5)
-            fees = self._get_rt_fees(pos)
-            return max(fees * mult, fixed_min, 0.05)
-
-        return fixed_min
+        return mode_cfg.get("min_profit_usd", 0)
 
     def _get_max_loss_usd(self, pos: dict) -> float:
         mode = pos.get("mode", "scalping")
@@ -673,28 +677,8 @@ class PositionMonitor:
         return position_size * (taker_pct / 100) * 2
 
     def _check_quick_exit(self, pos: dict, current_pnl: float) -> bool:
-        """V4: If position is profitable above fees*mult after N seconds, take profit."""
-        if self.bot_version != "V4" or not self.settings:
-            return False
-        fee_exit_cfg = self.settings.get("fee_exit", {})
-        quick_seconds = fee_exit_cfg.get("quick_exit_seconds", 90)
-        quick_mult = fee_exit_cfg.get("quick_exit_fee_mult", 2.0)
-
-        entry_time = pos.get("entry_time") or pos.get("created_at")
-        if not entry_time:
-            return False
-        try:
-            elapsed = (datetime.utcnow() - datetime.fromisoformat(entry_time)).total_seconds()
-        except Exception:
-            return False
-
-        if elapsed < quick_seconds:
-            return False
-
-        fees = self._get_rt_fees(pos)
-        # Net PnL after fees must be positive
-        net_pnl = current_pnl - fees
-        return net_pnl >= fees * (quick_mult - 1)  # profit above fees threshold
+        """Disabled for V4 — replaced by profit giveback protection."""
+        return False
 
     async def _handle_quick_exit(self, pos: dict, price: float, pnl_usd: float):
         symbol = pos["symbol"]
@@ -733,14 +717,9 @@ class PositionMonitor:
         if elapsed < max_hold:
             return False
 
-        # V4: Adjust stale threshold to account for fees
-        if self.bot_version == "V4" and self.settings:
-            taker_pct = self.settings.get("fees", {}).get("taker_pct", 0)
-            position_size = pos.get("position_size_usd", 0)
-            min_exit_profit = position_size * (taker_pct / 100) * 2  # fees aller-retour
-            if current_pnl < min_exit_profit:
-                return True
-            return False
+        # V4: Only close stale if losing money (let profitable trades run)
+        if self.bot_version == "V4":
+            return current_pnl < 0
 
         # Default: close if PnL < $0.05 (stagnant)
         if current_pnl < 0.05:
@@ -759,6 +738,58 @@ class PositionMonitor:
         await send_trade_update(
             symbol, "stale_timeout",
             f"Position stagnante fermee\nPnL: {pnl_usd:+.2f}$"
+        )
+
+    # --- V4: Profit Giveback Protection ---
+
+    def _check_profit_giveback(self, pos: dict, current_pnl: float) -> bool:
+        """V4: Close if trade gave back >50% of peak profit (secure remaining gains)."""
+        if self.bot_version != "V4" or not self.settings:
+            return False
+
+        pp_cfg = self.settings.get("profit_protection", {})
+        activation_mult = pp_cfg.get("activation_fee_mult", 3.0)
+        giveback_pct = pp_cfg.get("giveback_pct", 50)
+
+        peak = pos.get("_max_profit_usd", 0)
+        fees = self._get_rt_fees(pos)
+
+        # Only activate when peak was significant (> fees * mult)
+        if peak < fees * activation_mult:
+            return False
+
+        # How much has been given back?
+        giveback = peak - current_pnl
+        giveback_ratio = (giveback / peak * 100) if peak > 0 else 0
+
+        if giveback_ratio < giveback_pct:
+            return False
+
+        # Only close if remaining net profit > 0
+        net = current_pnl - fees
+        return net > 0
+
+    async def _handle_profit_giveback_close(self, pos: dict, price: float, current_pnl: float):
+        symbol = pos["symbol"]
+        fees = self._get_rt_fees(pos)
+        peak = pos.get("_max_profit_usd", 0)
+        net = current_pnl - fees
+        giveback_ratio = ((peak - current_pnl) / peak * 100) if peak > 0 else 0
+
+        logger.info(
+            f"[{self.bot_version}] PROFIT GIVEBACK {symbol} "
+            f"peak=${peak:.4f} current=${current_pnl:.4f} "
+            f"giveback={giveback_ratio:.0f}% net=${net:.4f}"
+        )
+
+        await self._cancel_remaining_tp_orders(pos)
+        await self._cancel_order_safe(pos.get("sl_order_id"), symbol)
+        await self._close_and_journal(pos, "profit_giveback", price, current_pnl)
+        pos["state"] = "closed"
+
+        await send_trade_update(
+            symbol, "profit_giveback",
+            f"Profit secured ! Peak ${peak:.2f} -> giveback {giveback_ratio:.0f}%\nNet: ${net:+.4f}"
         )
 
     # --- Helpers ordres ---

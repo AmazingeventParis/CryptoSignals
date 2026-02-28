@@ -257,6 +257,16 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
         + sentiment_normalized * w_sent
     )
 
+    # V4 ONLY: Gate base score BEFORE modifiers to prevent inflation
+    if is_v4:
+        base_score = max(0, min(100, final_score))
+        if base_score < min_score:
+            return _no_trade(
+                symbol, mode,
+                f"V4 base score {base_score} < {min_score} (before modifiers)",
+                direction["signals"], tradeability["score"]
+            )
+
     # V4 ONLY: MTF + VWAP + Learning modifiers
     learning_modifier = 0
     learning_reasons = []
