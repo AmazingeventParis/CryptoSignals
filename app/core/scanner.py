@@ -152,6 +152,9 @@ class Scanner:
                         from app.database import update_signal_status
                         await update_signal_status(signal_id, "executed")
                         logger.info(f"[{self.name}] AUTO-TRADE: {result['direction'].upper()} {symbol} execute")
+                        # Apply post-win cooldown
+                        cooldown_cfg = get_mode_config(mode, self.settings).get("cooldown", {})
+                        self.set_cooldown(symbol, mode, cooldown_cfg.get("after_win_seconds", 15))
             except Exception as e:
                 logger.error(f"[{self.name}] Erreur auto-execute: {e}")
 
@@ -190,7 +193,8 @@ class Scanner:
         last = self._signal_timestamps.get(symbol)
         if not last:
             return False
-        return (datetime.utcnow() - last).total_seconds() < 45
+        cooldown = self.settings.get("scanner", {}).get("anti_flipflop_seconds", 20)
+        return (datetime.utcnow() - last).total_seconds() < cooldown
 
     def _is_duplicate_signal(self, key: str, new_signal: dict) -> bool:
         if key not in self.last_signals:

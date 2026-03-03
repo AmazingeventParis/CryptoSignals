@@ -1,9 +1,10 @@
 # ============================================
-# CRYPTO SIGNALS - Configuration V4 (V1 STRICT + V4 INTELLIGENCE)
-# Filtres V1 (100% WR) + features V4 (regime, MTF, VWAP, learning, fee-aware)
+# CRYPTO SIGNALS - Configuration V4 "Machine Gun"
+# Micro-profits haute frequence : max volume, min_profit $0.40, max_loss $0.12
+# Break-even WR ~48.5% | Target 55%+ WR, ~80 trades/jour
 # ============================================
 
-# --- Paires surveillees ---
+# --- Paires surveillees (15 paires actives) ---
 pairs:
   - symbol: "XRP/USDT:USDT"
     enabled: true
@@ -20,31 +21,30 @@ pairs:
   - symbol: "BTC/USDT:USDT"
     enabled: true
   - symbol: "VIRTUAL/USDT:USDT"
-    enabled: false              # desactive: -$11.05 historique, 49.5% WR
+    enabled: true
   - symbol: "TRUMP/USDT:USDT"
     enabled: true
-  # Paires V4-only desactivees: pas assez de data, toutes negatives
   - symbol: "AVAX/USDT:USDT"
-    enabled: false
+    enabled: true
   - symbol: "LINK/USDT:USDT"
-    enabled: false
+    enabled: true
   - symbol: "NEAR/USDT:USDT"
-    enabled: false
+    enabled: true
   - symbol: "SUI/USDT:USDT"
-    enabled: false
+    enabled: true
   - symbol: "ARB/USDT:USDT"
-    enabled: false
+    enabled: true
   - symbol: "WIF/USDT:USDT"
-    enabled: false
+    enabled: true
 
 # --- Scanner ---
 scanner:
-  interval_seconds: 60
+  interval_seconds: 30       # 2x plus de scans (etait 60)
   modes:
-    - scalping
-    - swing
+    - scalping               # scalping SEULEMENT (pas de swing = trop lent)
+  anti_flipflop_seconds: 20  # etait 45 hardcoded
 
-# --- Mode Scalping (1-5 min) ---
+# --- Mode Scalping (micro-profits) ---
 scalping:
   timeframes:
     analysis:
@@ -53,7 +53,7 @@ scalping:
     filter: "15m"
 
   entry:
-    min_score: 65              # V1 strict (was 55)
+    min_score: 50              # etait 65 → beaucoup plus de signaux
     setups:
       - breakout
       - retest
@@ -62,27 +62,28 @@ scalping:
       - divergence
     confirmation_candles: 1
 
-  max_loss_usd: 0.25    # cap absolu par trade scalping (avant SL)
+  min_profit_usd: 0.40        # ferme a $0.40 gross profit
+  max_loss_usd: 0.12          # etait 0.25 → coupe 2x plus vite
 
   stop_loss:
     method: "atr"
-    atr_multiplier: 1.5
-    max_stop_pct: 0.5
+    atr_multiplier: 1.0        # etait 1.5 → SL plus serre
+    max_stop_pct: 0.3          # etait 0.5 → cap SL a 0.3%
 
   take_profit:
-    tp1_rr: 1.5               # hausse (was 1.0) - gains plus gros pour couvrir les fees
-    tp1_close_pct: 50          # prendre 50% des gains sur TP1 (securiser)
-    tp2_rr: 2.5               # hausse (was 1.5) - viser plus haut
-    tp2_close_pct: 30
-    tp3_rr: 4.0               # hausse (was 2.5) - home run target
-    tp3_close_pct: 20
+    tp1_rr: 1.5
+    tp1_close_pct: 100         # 100% a TP1 — machine gun = prendre et partir
+    tp2_rr: 2.5
+    tp2_close_pct: 0
+    tp3_rr: 4.0
+    tp3_close_pct: 0
 
   early_protection:
-    breakeven_at_pct: 65       # retarde (was 50) - laisser respirer le trade
-    trail_activation_pct: 80   # retarde (was 65) - ne pas verrouiller trop tot
+    breakeven_at_pct: 40       # etait 65 → breakeven plus tot
+    trail_activation_pct: 60
     trail_behind_pct: 30
 
-  max_hold_seconds: 7200     # 2h max (was 1h) - plus de temps pour atteindre les TP
+  max_hold_seconds: 900        # etait 7200 → 15min max
 
   break_even:
     trigger: "tp1"
@@ -92,77 +93,19 @@ scalping:
     trail_distance_atr: 0.8
 
   cooldown:
-    after_loss_seconds: 300
-    after_win_seconds: 120
-    max_consecutive_losses: 3
-    pause_after_max_losses_seconds: 900
+    after_loss_seconds: 30     # etait 300 → reprend vite
+    after_win_seconds: 15      # etait 120 → reprend tres vite
+    max_consecutive_losses: 5
+    pause_after_max_losses_seconds: 300
 
   risk:
     max_risk_per_trade_pct: 1.0
     leverage_range: [10, 12]
     margin_mode: "isolated"
 
-# --- Mode Swing Court (15-30 min) ---
-swing:
-  timeframes:
-    analysis:
-      - "5m"
-      - "15m"
-    filter: "1h"
-
-  entry:
-    min_score: 70              # V1 strict (was 60)
-    setups:
-      - breakout
-      - retest
-      - divergence
-      - ema_bounce
-      - momentum
-    confirmation_candles: 2    # V1: double confirmation (was 1)
-
-  max_loss_usd: 0.40    # cap absolu par trade swing (avant SL)
-
-  stop_loss:
-    method: "structure"
-    buffer_atr: 0.5
-    max_stop_pct: 1.0
-
-  take_profit:
-    tp1_rr: 2.0               # hausse (was 1.5) - swing vise plus haut
-    tp1_close_pct: 40
-    tp2_rr: 3.5               # hausse (was 2.5)
-    tp2_close_pct: 30
-    tp3_rr: 5.0               # hausse (was 4.0) - big swing target
-    tp3_close_pct: 30
-
-  early_protection:
-    breakeven_at_pct: 60       # retarde (was 50)
-    trail_activation_pct: 75   # retarde (was 65)
-    trail_behind_pct: 30
-
-  max_hold_seconds: 21600    # 6h max (was 4h) - plus de temps pour les swings
-
-  break_even:
-    trigger: "tp1"
-
-  trailing_stop:
-    activate_after: "tp2"
-    trail_distance_atr: 1.2
-
-  cooldown:
-    after_loss_seconds: 300
-    after_win_seconds: 120
-    max_consecutive_losses: 3
-    pause_after_max_losses_seconds: 1800
-
-  risk:
-    max_risk_per_trade_pct: 1.0
-    leverage_range: [10, 15]
-    margin_mode: "isolated"
-
-# --- Couche A: Tradeability Filter ---
+# --- Couche A: Tradeability Filter (beaucoup plus loose) ---
 tradeability:
-  min_score: 0.60              # V1 strict (was 0.35) - marches propres uniquement
+  min_score: 0.30              # etait 0.60 → accepte plus de marches
   weights:
     volatility: 0.17
     volume: 0.17
@@ -171,38 +114,38 @@ tradeability:
     funding: 0.12
     oi_stability: 0.10
     adx_trend: 0.10
-    order_flow: 0.05           # V4: poids order flow
+    order_flow: 0.05
   thresholds:
-    atr_min_ratio: 0.5
-    atr_max_ratio: 3.0
-    volume_min_ratio: 0.4      # V1 strict (was 0.2) - exige 2x plus de volume
-    spread_max_scalp: 0.05     # V1 strict (was 0.10) - spreads ultra-serres
-    spread_max_swing: 0.08     # V1 strict (was 0.15)
-    spread_kill: 0.15          # V1 strict (was 0.30) - kill 2x plus tot
+    atr_min_ratio: 0.3         # etait 0.5
+    atr_max_ratio: 4.0         # etait 3.0
+    volume_min_ratio: 0.15     # etait 0.4
+    spread_max_scalp: 0.10     # etait 0.05
+    spread_max_swing: 0.15
+    spread_kill: 0.25          # etait 0.15
     funding_max: 0.1
     funding_kill: 0.3
     oi_drop_max_pct: 5.0
 
-# --- Couche B: Direction Filter ---
+# --- Couche B: Direction Filter (plus permissive) ---
 direction:
   ema_fast: 20
   ema_slow: 50
-  ema_neutral_threshold: 0.10   # V1 strict (was 0.05) - ecarte faux croisements
+  ema_neutral_threshold: 0.05  # etait 0.10
   rsi_period: 14
-  rsi_long_threshold: 55        # V1 strict (was 52) - plus de conviction
-  rsi_short_threshold: 45       # V1 strict (was 48)
+  rsi_long_threshold: 52      # etait 55
+  rsi_short_threshold: 48     # etait 45
   structure_lookback: 20
 
-# --- Couche C: Entry Triggers ---
+# --- Couche C: Entry Triggers (plus d'opportunites) ---
 entry:
   bb_period: 20
   bb_std: 2
-  bb_squeeze_threshold: 0.04   # relache (was 0.02) - plus d'opportunites breakout
-  volume_spike_ratio: 1.3      # relache (was 1.5) - accepte volume moderement eleve
-  retest_buffer_pct: 0.1
-  rejection_wick_ratio: 0.5
+  bb_squeeze_threshold: 0.06  # etait 0.04
+  volume_spike_ratio: 1.1     # etait 1.3
+  retest_buffer_pct: 0.15     # etait 0.1
+  rejection_wick_ratio: 0.4   # etait 0.5
   divergence_lookback: 14
-  ema_bounce_proximity_pct: 0.25  # relache (was 0.15) - bounce acceptable dans 0.25% de l'EMA
+  ema_bounce_proximity_pct: 0.40  # etait 0.25
 
 # --- Scoring ---
 scoring:
@@ -222,50 +165,43 @@ scoring:
     weak: 50
 
 # --- V4 specifique ---
-# Direction neutre en swing = BLOQUE (comme V1 - pas de trade en indecision)
-swing_neutral_allowed: false
+swing_neutral_allowed: true   # pas de swing mais safe default
 
 # --- Anti-correlation ---
 anti_correlation:
-  max_same_direction: 5       # max positions dans la meme direction
+  max_same_direction: 8       # etait 5
 
 # --- Profit Giveback Protection ---
 profit_protection:
-  activation_fee_mult: 8.0    # hausse (was 3.0) - active seulement quand profit significatif (~$0.96)
-  giveback_pct: 60            # hausse (was 50) - tolere plus de retracement avant de fermer
+  activation_fee_mult: 999.0  # desactive profit_giveback
+  giveback_pct: 60
 
-# --- V4 Features ---
+# --- V4 Features (toutes OFF sauf stale_exit) ---
 v4_features:
-  regime_detection: true       # Detection regime TRENDING/RANGING/VOLATILE
-  mtf_confluence: true         # Multi-timeframe confluence scoring
-  vwap_confluence: true        # VWAP comme S/R dynamique
-  order_flow: true             # Analyse ratio bid/ask
-  adaptive_learning: true      # Moteur d'apprentissage adaptatif
-  stale_exit: true             # Fermeture positions stagnantes
-  dynamic_sl: true             # Ajustement SL selon volatilite
-  anti_correlation: true       # Garde max 3 positions meme direction
+  regime_detection: false
+  mtf_confluence: false
+  vwap_confluence: false
+  order_flow: false
+  adaptive_learning: false
+  stale_exit: true             # GARDER — ferme positions stagnantes
+  dynamic_sl: false
+  anti_correlation: false
 
 # --- Frais de trading ---
 fees:
   taker_pct: 0.06  # MEXC taker fee 0.06%
 
-# --- Position Sizing dynamique ---
+# --- Position Sizing fixe ---
 sizing:
-  base_pct: 8          # % du solde par trade
-  min_margin: 3         # marge minimum $
-  max_margin: 15        # marge maximum $ (reduit pour limiter pertes)
-
-# --- Trailing TP apres TP3 ---
-trailing_tp:
-  enabled: true
-  tp3_close_pct: 50     # fermer 50% a TP3
-  trail_atr: 1.0        # trail le reste a 1.0x ATR
+  base_pct: 10
+  min_margin: 8
+  max_margin: 12
 
 # --- Risk Limits ---
 risk_limits:
-  max_daily_loss_usd: 15.0
-  max_consecutive_losses: 10
-  pause_minutes: 15
+  max_daily_loss_usd: 8.0
+  max_consecutive_losses: 8
+  pause_minutes: 10
 
 # --- Dashboard ---
 dashboard:

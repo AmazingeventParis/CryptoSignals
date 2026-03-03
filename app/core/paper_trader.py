@@ -58,14 +58,9 @@ class PaperTrader:
                 logger.info(f"[{self.bot_version}] Circuit breaker: {breaker_reason}, skip {signal['symbol']}")
                 return False
 
-        # V4: Dynamic max positions based on balance
+        # V4: Fixed max 8 positions
         if self.bot_version == "V4":
-            portfolio = await get_paper_portfolio(self.bot_version)
-            sizing_cfg = self.settings.get("sizing", {})
-            base_pct = sizing_cfg.get("base_pct", 8) / 100
-            avg_margin = portfolio["current_balance"] * base_pct
-            avg_margin = max(avg_margin, sizing_cfg.get("min_margin", 3))
-            max_pos = max(3, min(8, int(portfolio["current_balance"] * 0.60 / avg_margin)))
+            max_pos = 8
         else:
             max_pos = MAX_OPEN
 
@@ -108,18 +103,11 @@ class PaperTrader:
         portfolio = await get_paper_portfolio(self.bot_version)
         available = portfolio["current_balance"] - portfolio["reserved_margin"]
 
-        # V4: Dynamic position sizing based on score and balance
+        # V4: Fixed sizing from config (no score_mult variation)
         if self.bot_version == "V4":
             sizing_cfg = self.settings.get("sizing", {})
-            base_pct = sizing_cfg.get("base_pct", 8) / 100
-            min_margin = sizing_cfg.get("min_margin", 3)
-            max_margin = sizing_cfg.get("max_margin", 20)
-            score = signal.get("score", 60)
-            # Score scaling: 50→0.6x, 65→1.0x, 85→1.5x
-            score_mult = 0.6 + (score - 50) * (0.9 / 35) if score <= 85 else 1.5
-            score_mult = max(0.6, min(1.5, score_mult))
-            margin = portfolio["current_balance"] * base_pct * score_mult
-            margin = max(min_margin, min(max_margin, round(margin, 2)))
+            margin = 10.0  # fixed $10
+            margin = max(sizing_cfg.get("min_margin", 8), min(sizing_cfg.get("max_margin", 12), margin))
         else:
             margin = FIXED_MARGIN
 

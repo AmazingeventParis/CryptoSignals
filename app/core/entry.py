@@ -9,7 +9,7 @@ from app.config import SETTINGS
 
 logger = logging.getLogger(__name__)
 
-ENTRY_CFG = SETTINGS["entry"]
+_DEFAULT_ENTRY_CFG = SETTINGS["entry"]
 SCORING_CFG = SETTINGS["scoring"]
 
 
@@ -22,15 +22,16 @@ def _safe_val(val, default=0):
     return val
 
 
-def detect_breakout(indicators: dict, direction_bias: str) -> dict | None:
+def detect_breakout(indicators: dict, direction_bias: str, entry_cfg: dict = None) -> dict | None:
+    cfg = entry_cfg or _DEFAULT_ENTRY_CFG
     bb_bw = indicators.get("last_bb_bandwidth", 999)
     vol_ratio = indicators.get("last_volume_ratio", 0)
     price = indicators.get("last_close", 0)
     bb_upper = indicators.get("last_bb_upper", 0)
     bb_lower = indicators.get("last_bb_lower", 0)
 
-    squeeze_threshold = ENTRY_CFG["bb_squeeze_threshold"]
-    vol_spike = ENTRY_CFG["volume_spike_ratio"]
+    squeeze_threshold = cfg["bb_squeeze_threshold"]
+    vol_spike = cfg["volume_spike_ratio"]
 
     if bb_bw > squeeze_threshold:
         return None
@@ -90,13 +91,14 @@ def detect_breakout(indicators: dict, direction_bias: str) -> dict | None:
     return None
 
 
-def detect_retest(indicators: dict, df, direction_bias: str) -> dict | None:
+def detect_retest(indicators: dict, df, direction_bias: str, entry_cfg: dict = None) -> dict | None:
+    cfg = entry_cfg or _DEFAULT_ENTRY_CFG
     if df is None or len(df) < 20:
         return None
 
     price = indicators.get("last_close", 0)
     atr_val = indicators.get("last_atr", 0)
-    buffer = ENTRY_CFG["retest_buffer_pct"] / 100
+    buffer = cfg["retest_buffer_pct"] / 100
 
     highs = df["high"].tail(20)
     lows = df["low"].tail(20)
@@ -129,7 +131,7 @@ def detect_retest(indicators: dict, df, direction_bias: str) -> dict | None:
         support_zone = recent_low * (1 + buffer)
         if price <= support_zone and price > recent_low:
             lower_wick = min(candle["open"], candle["close"]) - candle["low"]
-            if lower_wick > body * ENTRY_CFG["rejection_wick_ratio"]:
+            if lower_wick > body * cfg["rejection_wick_ratio"]:
                 # Stoch RSI oversold = confirmation forte
                 if stoch_k < 20:
                     stoch_bonus = 8
@@ -153,7 +155,7 @@ def detect_retest(indicators: dict, df, direction_bias: str) -> dict | None:
         resistance_zone = recent_high * (1 - buffer)
         if price >= resistance_zone and price < recent_high:
             upper_wick = candle["high"] - max(candle["open"], candle["close"])
-            if upper_wick > body * ENTRY_CFG["rejection_wick_ratio"]:
+            if upper_wick > body * cfg["rejection_wick_ratio"]:
                 # Stoch RSI overbought = confirmation forte
                 if stoch_k > 80:
                     stoch_bonus = 8
@@ -209,7 +211,8 @@ def detect_divergence_setup(indicators: dict, direction_bias: str) -> dict | Non
     return None
 
 
-def detect_ema_bounce(indicators: dict, direction_bias: str) -> dict | None:
+def detect_ema_bounce(indicators: dict, direction_bias: str, entry_cfg: dict = None) -> dict | None:
+    cfg = entry_cfg or _DEFAULT_ENTRY_CFG
     price = indicators.get("last_close", 0)
     ema20 = indicators.get("last_ema_fast", 0)
     ema50 = indicators.get("last_ema_slow", 0)
@@ -217,7 +220,7 @@ def detect_ema_bounce(indicators: dict, direction_bias: str) -> dict | None:
     if ema20 == 0 or price == 0:
         return None
 
-    proximity_pct = ENTRY_CFG["ema_bounce_proximity_pct"]
+    proximity_pct = cfg["ema_bounce_proximity_pct"]
     distance_pct = abs(price - ema20) / ema20 * 100
 
     if distance_pct > proximity_pct:
@@ -469,16 +472,18 @@ def find_best_entry(
     df,
     direction_bias: str,
     allowed_setups: list[str],
+    entry_cfg: dict = None,
 ) -> dict | None:
+    cfg = entry_cfg or _DEFAULT_ENTRY_CFG
     setups = []
 
     if "breakout" in allowed_setups:
-        s = detect_breakout(indicators, direction_bias)
+        s = detect_breakout(indicators, direction_bias, entry_cfg=cfg)
         if s:
             setups.append(s)
 
     if "retest" in allowed_setups:
-        s = detect_retest(indicators, df, direction_bias)
+        s = detect_retest(indicators, df, direction_bias, entry_cfg=cfg)
         if s:
             setups.append(s)
 
@@ -488,7 +493,7 @@ def find_best_entry(
             setups.append(s)
 
     if "ema_bounce" in allowed_setups:
-        s = detect_ema_bounce(indicators, direction_bias)
+        s = detect_ema_bounce(indicators, direction_bias, entry_cfg=cfg)
         if s:
             setups.append(s)
 

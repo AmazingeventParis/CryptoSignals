@@ -121,12 +121,14 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
     # V4 ONLY: REGIME DE MARCHE + MTF CONFLUENCE
     # =========================================
     is_v4 = s.get("_bot_version") == "V4"
+    v4f = s.get("v4_features", {})
     regime_info = {}
     market_regime = ""
     mtf_confluence = 0.0
-    if is_v4:
+    if is_v4 and v4f.get("regime_detection", False):
         regime_info = detect_regime(indicators_analysis)
         market_regime = regime_info["regime"]
+    if is_v4 and v4f.get("mtf_confluence", False):
         mtf_confluence = _compute_mtf_confluence(indicators_analysis, indicators_filter)
 
     # =========================================
@@ -140,7 +142,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
             symbol, mode, "Tous les setups desactives par apprentissage",
             direction["signals"], tradeability["score"]
         )
-    entry = find_best_entry(indicators_analysis, df_analysis, direction_bias, allowed_setups)
+    entry = find_best_entry(indicators_analysis, df_analysis, direction_bias, allowed_setups, entry_cfg=s.get("entry"))
 
     if not entry:
         return _no_trade(
@@ -205,12 +207,12 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
     regime_mod = 0
     mtf_modifier = 0
     vwap_modifier = 0
-    if is_v4:
+    if is_v4 and v4f.get("regime_detection", False) and regime_info:
         regime_mod = regime_score_modifier(market_regime, entry["type"], regime_info.get("confidence", 0))
         setup_score = max(0, min(100, setup_score + regime_mod))
+    if is_v4 and v4f.get("mtf_confluence", False):
         mtf_modifier = int(mtf_confluence)
-
-        # VWAP confluence: LONG above VWAP = +5, LONG far below = -5
+    if is_v4 and v4f.get("vwap_confluence", False):
         vwap_val = _safe_val(indicators_analysis.get("last_vwap"), 0)
         last_close = _safe_val(indicators_analysis.get("last_close"), 0)
         if vwap_val > 0 and last_close > 0:
@@ -233,14 +235,15 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
 
     weights = scoring["weights"]
 
-    # V4: Mode-specific weights — setup is the best predictor of trade success,
-    # tradeability is a pass/fail gate (already filtered at 0.60), not a predictor
-    if is_v4 and mode == "scalping":
+    # V4 with features ON: Mode-specific weights
+    # V4 with features OFF: use standard YAML weights (same as V1/V2/V3)
+    v4_has_active_features = is_v4 and any(v4f.get(k, False) for k in ("regime_detection", "mtf_confluence", "vwap_confluence", "adaptive_learning"))
+    if v4_has_active_features and mode == "scalping":
         w_trade = 0.20
         w_dir = 0.30
         w_setup = 0.45
         w_sent = 0.05
-    elif is_v4 and mode == "swing":
+    elif v4_has_active_features and mode == "swing":
         w_trade = 0.20
         w_dir = 0.25
         w_setup = 0.40
@@ -260,12 +263,10 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
 
     min_score = mode_cfg["entry"]["min_score"]
 
-    # V4: Log base score for debugging but let modifiers have their say
-    if is_v4:
+    # V4 with active features: early reject if base score is too far below threshold
+    if v4_has_active_features:
         base_score = max(0, min(100, final_score))
         if base_score < min_score - 10:
-            # Only hard-reject if base is WAY below threshold (>10pts gap)
-            # Modifiers cannot rescue fundamentally bad signals
             return _no_trade(
                 symbol, mode,
                 f"V4 base score {base_score} < {min_score - 10} (too far below threshold)",
@@ -278,29 +279,30 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
     _candle_pattern = "none"
     if is_v4:
         final_score += mtf_modifier + vwap_modifier
-        adaptive_learner = _get_adaptive_learner("V4")
-        if adaptive_learner:
-            now = datetime.utcnow()
-            # Detect confirmed candle pattern for learning
-            _candle_pattern = "none"
-            for pat_name in ("engulfing", "hammer", "shooting_star", "pin_bar", "doji"):
-                pat_val = indicators_analysis.get(pat_name, "none")
-                if pat_val != "none":
-                    _candle_pattern = pat_name
-                    break
-            signal_ctx = {
-                "setup_type": entry["type"],
-                "symbol": symbol,
-                "mode": mode,
-                "regime": market_regime,
-                "hour_utc": now.hour,
-                "score": final_score,
-                "direction": entry["direction"],
-                "mtf_confluence": mtf_confluence,
-                "candle_pattern": _candle_pattern,
-            }
-            learning_modifier, learning_reasons = adaptive_learner.get_total_modifier(signal_ctx)
-            final_score += learning_modifier
+
+        if v4f.get("adaptive_learning", False):
+            adaptive_learner = _get_adaptive_learner("V4")
+            if adaptive_learner:
+                now = datetime.utcnow()
+                _candle_pattern = "none"
+                for pat_name in ("engulfing", "hammer", "shooting_star", "pin_bar", "doji"):
+                    pat_val = indicators_analysis.get(pat_name, "none")
+                    if pat_val != "none":
+                        _candle_pattern = pat_name
+                        break
+                signal_ctx = {
+                    "setup_type": entry["type"],
+                    "symbol": symbol,
+                    "mode": mode,
+                    "regime": market_regime,
+                    "hour_utc": now.hour,
+                    "score": final_score,
+                    "direction": entry["direction"],
+                    "mtf_confluence": mtf_confluence,
+                    "candle_pattern": _candle_pattern,
+                }
+                learning_modifier, learning_reasons = adaptive_learner.get_total_modifier(signal_ctx)
+                final_score += learning_modifier
 
     final_score = max(0, min(100, final_score))
 

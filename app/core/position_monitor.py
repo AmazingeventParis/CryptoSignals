@@ -202,46 +202,19 @@ class PositionMonitor:
             if pos_id in self._processing:
                 continue
 
-            # --- V4 only: Track max profit / max drawdown + stale timeout + quick exit ---
-            if self.bot_version == "V4":
-                current_pnl_track = self._calc_unrealized_pnl(pos, price)
-                if current_pnl_track > pos.get("_max_profit_usd", 0):
-                    pos["_max_profit_usd"] = current_pnl_track
-                if current_pnl_track < pos.get("_max_drawdown_usd", 0):
-                    pos["_max_drawdown_usd"] = current_pnl_track
-
-                # V4: Quick exit — after N seconds, if profit > fees*mult → close
-                if self._check_quick_exit(pos, current_pnl_track):
-                    self._processing.add(pos_id)
-                    try:
-                        await self._handle_quick_exit(pos, price, current_pnl_track)
-                    finally:
-                        self._processing.discard(pos_id)
-                    continue
-
-                if self._check_stale_position(pos, current_pnl_track):
-                    self._processing.add(pos_id)
-                    try:
-                        await self._handle_stale_close(pos, price, current_pnl_track)
-                    finally:
-                        self._processing.discard(pos_id)
-                    continue
-
-                # V4: Profit giveback protection — secure gains when trade reverses
-                if self._check_profit_giveback(pos, current_pnl_track):
-                    self._processing.add(pos_id)
-                    try:
-                        await self._handle_profit_giveback_close(pos, price, current_pnl_track)
-                    finally:
-                        self._processing.discard(pos_id)
-                    continue
-
             direction = pos["direction"]
+            current_pnl = self._calc_unrealized_pnl(pos, price)
 
-            # --- Quick profit (V3) ---
+            # --- V4 only: Track max profit / max drawdown ---
+            if self.bot_version == "V4":
+                if current_pnl > pos.get("_max_profit_usd", 0):
+                    pos["_max_profit_usd"] = current_pnl
+                if current_pnl < pos.get("_max_drawdown_usd", 0):
+                    pos["_max_drawdown_usd"] = current_pnl
+
+            # --- Quick profit (V3 + V4 min_profit_usd) — PRIORITY 1 ---
             min_profit = self._get_min_profit_usd(pos)
             if min_profit > 0:
-                current_pnl = self._calc_unrealized_pnl(pos, price)
                 if current_pnl >= min_profit:
                     self._processing.add(pos_id)
                     try:
@@ -250,14 +223,33 @@ class PositionMonitor:
                         self._processing.discard(pos_id)
                     continue
 
-            # --- Max loss cap (all bots with max_loss_usd configured) ---
+            # --- Max loss cap (all bots) — PRIORITY 2 ---
             max_loss = self._get_max_loss_usd(pos)
             if max_loss > 0:
-                current_pnl = self._calc_unrealized_pnl(pos, price)
                 if current_pnl <= -max_loss:
                     self._processing.add(pos_id)
                     try:
                         await self._handle_max_loss_close(pos, price, current_pnl)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
+
+            # --- V4 only: Stale timeout + profit giveback (after min_profit/max_loss) ---
+            if self.bot_version == "V4":
+                v4f = self.settings.get("v4_features", {}) if self.settings else {}
+
+                if v4f.get("stale_exit", True) and self._check_stale_position(pos, current_pnl):
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_stale_close(pos, price, current_pnl)
+                    finally:
+                        self._processing.discard(pos_id)
+                    continue
+
+                if self._check_profit_giveback(pos, current_pnl):
+                    self._processing.add(pos_id)
+                    try:
+                        await self._handle_profit_giveback_close(pos, price, current_pnl)
                     finally:
                         self._processing.discard(pos_id)
                     continue
@@ -355,9 +347,11 @@ class PositionMonitor:
 
     async def _dynamic_sl_adjust(self):
         """Ajuste dynamiquement le SL si la volatilite augmente (avant TP1 seulement).
-        V4: desactive - max_loss_usd cap remplace le widening dynamique."""
+        V4: controlled by v4_features.dynamic_sl flag."""
         if self.bot_version == "V4":
-            return
+            v4f = self.settings.get("v4_features", {}) if self.settings else {}
+            if not v4f.get("dynamic_sl", False):
+                return
         for pos_id, pos in list(self._positions.items()):
             if pos.get("state") == "closed" or pos.get("tp1_hit"):
                 continue
@@ -617,10 +611,6 @@ class PositionMonitor:
     # --- Quick profit (V3) ---
 
     def _get_min_profit_usd(self, pos: dict) -> float:
-        # V4: disabled — replaced by profit giveback protection
-        if self.bot_version == "V4":
-            return 0
-
         mode = pos.get("mode", "scalping")
         mode_cfg = self.settings.get(mode, {}) if self.settings else {}
         return mode_cfg.get("min_profit_usd", 0)
