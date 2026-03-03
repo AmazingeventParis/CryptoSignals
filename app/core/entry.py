@@ -310,9 +310,13 @@ def detect_momentum(indicators: dict, direction_bias: str) -> dict | None:
     ema20 = indicators.get("last_ema_fast", 0)
     ema50 = indicators.get("last_ema_slow", 0)
     macd_hist = indicators.get("last_macd_histogram", 0)
+    vol_ratio = indicators.get("volume_ratio", 1.0)
 
     if not price or adx < 20:
         return None
+
+    # Volume score base sur le ratio reel (comme les autres setups)
+    vol_score = min(20, int(max(0, (vol_ratio - 0.5)) * 20))
 
     # SHORT momentum: RSI < 35, DI- > DI+, prix sous EMA20 et EMA50
     if direction_bias in ("short", "neutral"):
@@ -329,7 +333,7 @@ def detect_momentum(indicators: dict, direction_bias: str) -> dict | None:
                 "direction": "short",
                 "entry_price": price,
                 "pattern_score": score,
-                "vol_score": 5,
+                "vol_score": vol_score,
                 "reason": f"Momentum baissier fort (RSI {rsi:.1f}, ADX {adx:.1f})",
             }
 
@@ -348,7 +352,7 @@ def detect_momentum(indicators: dict, direction_bias: str) -> dict | None:
                 "direction": "long",
                 "entry_price": price,
                 "pattern_score": score,
-                "vol_score": 5,
+                "vol_score": vol_score,
                 "reason": f"Momentum haussier fort (RSI {rsi:.1f}, ADX {adx:.1f})",
             }
 
@@ -408,27 +412,27 @@ def candle_confirmation(entry: dict, indicators: dict, df) -> dict:
                 modifier -= 10
                 reasons.append("derniere bougie fortement haussiere")
 
-    # --- 3. Check patterns (bonus) ---
+    # --- 3. Check patterns (bonus/malus equilibre) ---
     if direction == "long":
         if engulfing == "bullish" or hammer == "bullish":
-            modifier += 8
+            modifier += 15
             pat = "engulfing" if engulfing == "bullish" else "hammer"
             reasons.append(f"{pat} haussier confirme")
         if shooting_star == "bearish":
-            modifier -= 15
+            modifier -= 10
             reasons.append("shooting star bearish contredit LONG")
     elif direction == "short":
         if engulfing == "bearish" or shooting_star == "bearish":
-            modifier += 8
+            modifier += 15
             pat = "engulfing" if engulfing == "bearish" else "shooting star"
             reasons.append(f"{pat} baissier confirme")
         if hammer == "bullish":
-            modifier -= 15
+            modifier -= 10
             reasons.append("hammer bullish contredit SHORT")
 
-    # Doji = indecision
+    # Doji = indecision (leger malus)
     if doji != "none":
-        modifier -= 5
+        modifier -= 3
         reasons.append("doji (indecision)")
 
     # --- 4. Bougies consecutives opposees (malus) ---
@@ -436,10 +440,10 @@ def candle_confirmation(entry: dict, indicators: dict, df) -> dict:
     consec_dir = candle_ctx.get("last_candle_direction", "neutral")
     if consecutive >= 3:
         if direction == "long" and consec_dir == "bearish":
-            modifier -= 10
+            modifier -= 8
             reasons.append(f"{consecutive} bougies baissières consecutives")
         elif direction == "short" and consec_dir == "bullish":
-            modifier -= 10
+            modifier -= 8
             reasons.append(f"{consecutive} bougies haussières consecutives")
 
     reason_str = "; ".join(reasons) if reasons else "bougies neutres"

@@ -130,16 +130,15 @@ class PaperTrader:
         leverage = signal.get("leverage", 10)
         entry_price = signal["entry_price"]
 
-        # V4: Simulate slippage (half-spread, capped at 0.5% max)
-        if self.bot_version == "V4":
-            spread_pct = signal.get("_indicator_snapshot", {}).get("spread_pct", 0)
-            if 0 < spread_pct <= 0.5:  # ignore absurd values (999 = missing data)
-                half_spread = entry_price * (spread_pct / 100) / 2
-                if signal["direction"] == "long":
-                    entry_price += half_spread  # worse fill for long
-                else:
-                    entry_price -= half_spread  # worse fill for short
-                entry_price = round(entry_price, 8)
+        # Simulate slippage: market orders fill at bid/ask, not mid price
+        spread_pct = signal.get("_indicator_snapshot", {}).get("spread_pct", 0)
+        if 0 < spread_pct <= 0.5:  # ignore absurd values (999 = missing data)
+            half_spread = entry_price * (spread_pct / 100) / 2
+            if signal["direction"] == "long":
+                entry_price += half_spread  # worse fill for long (fill at ask)
+            else:
+                entry_price -= half_spread  # worse fill for short (fill at bid)
+            entry_price = round(entry_price, 8)
 
         position_size_usd = margin * leverage
         quantity = round(position_size_usd / entry_price, 6)

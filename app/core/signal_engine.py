@@ -233,17 +233,18 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
 
     weights = scoring["weights"]
 
-    # V4: Mode-specific weights (reduce sentiment for scalping)
+    # V4: Mode-specific weights — setup is the best predictor of trade success,
+    # tradeability is a pass/fail gate (already filtered at 0.60), not a predictor
     if is_v4 and mode == "scalping":
-        w_trade = 0.35
+        w_trade = 0.20
         w_dir = 0.30
-        w_setup = 0.30
+        w_setup = 0.45
         w_sent = 0.05
     elif is_v4 and mode == "swing":
-        w_trade = 0.30
+        w_trade = 0.20
         w_dir = 0.25
-        w_setup = 0.25
-        w_sent = 0.20
+        w_setup = 0.40
+        w_sent = 0.15
     else:
         w_trade = weights.get("tradeability", 0.30)
         w_dir = weights.get("direction", 0.25)
@@ -259,13 +260,15 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
 
     min_score = mode_cfg["entry"]["min_score"]
 
-    # V4 ONLY: Gate base score BEFORE modifiers to prevent inflation
+    # V4: Log base score for debugging but let modifiers have their say
     if is_v4:
         base_score = max(0, min(100, final_score))
-        if base_score < min_score:
+        if base_score < min_score - 10:
+            # Only hard-reject if base is WAY below threshold (>10pts gap)
+            # Modifiers cannot rescue fundamentally bad signals
             return _no_trade(
                 symbol, mode,
-                f"V4 base score {base_score} < {min_score} (before modifiers)",
+                f"V4 base score {base_score} < {min_score - 10} (too far below threshold)",
                 direction["signals"], tradeability["score"]
             )
 

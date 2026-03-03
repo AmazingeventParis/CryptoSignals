@@ -238,7 +238,7 @@ class PositionMonitor:
 
             direction = pos["direction"]
 
-            # --- Quick profit / max loss check (V3) ---
+            # --- Quick profit (V3) ---
             min_profit = self._get_min_profit_usd(pos)
             if min_profit > 0:
                 current_pnl = self._calc_unrealized_pnl(pos, price)
@@ -249,8 +249,12 @@ class PositionMonitor:
                     finally:
                         self._processing.discard(pos_id)
                     continue
-                max_loss = self._get_max_loss_usd(pos)
-                if max_loss > 0 and current_pnl <= -max_loss:
+
+            # --- Max loss cap (all bots with max_loss_usd configured) ---
+            max_loss = self._get_max_loss_usd(pos)
+            if max_loss > 0:
+                current_pnl = self._calc_unrealized_pnl(pos, price)
+                if current_pnl <= -max_loss:
                     self._processing.add(pos_id)
                     try:
                         await self._handle_max_loss_close(pos, price, current_pnl)
@@ -276,7 +280,7 @@ class PositionMonitor:
                 if sl_hit:
                     self._processing.add(pos_id)
                     try:
-                        await self._handle_sl_hit(pos)
+                        await self._handle_sl_hit(pos, price)
                     finally:
                         self._processing.discard(pos_id)
                     continue
@@ -296,7 +300,7 @@ class PositionMonitor:
                 if sl_hit:
                     self._processing.add(pos_id)
                     try:
-                        await self._handle_sl_hit(pos)
+                        await self._handle_sl_hit(pos, price)
                     finally:
                         self._processing.discard(pos_id)
                     continue
@@ -316,7 +320,7 @@ class PositionMonitor:
                 if sl_hit:
                     self._processing.add(pos_id)
                     try:
-                        await self._handle_sl_hit(pos)
+                        await self._handle_sl_hit(pos, price)
                     finally:
                         self._processing.discard(pos_id)
                     continue
@@ -525,17 +529,22 @@ class PositionMonitor:
             f"TP3 touche ! Position fermee 100%\nPnL: +{pnl:.2f}$"
         )
 
-    async def _handle_sl_hit(self, pos: dict):
+    async def _handle_sl_hit(self, pos: dict, actual_price: float = 0):
+        """Handle SL hit using actual market price (gap-through simulation).
+        actual_price: the real tick price that triggered the SL condition.
+        In real trading, stop-market orders fill at market price, not SL price."""
         symbol = pos["symbol"]
         state = pos["state"]
-        logger.info(f"[{self.bot_version}] SL HIT {symbol} (state={state})")
+        fill_price = actual_price if actual_price > 0 else pos["stop_loss"]
+        logger.info(f"[{self.bot_version}] SL HIT {symbol} (state={state}) "
+                     f"SL={pos['stop_loss']} fill={fill_price}")
 
         await self._cancel_remaining_tp_orders(pos)
         await update_position(pos["id"], {"sl_hit": 1})
         pos["sl_hit"] = 1
 
-        pnl = self._calculate_total_pnl(pos, "sl")
-        await self._close_and_journal(pos, "sl", pos["stop_loss"], pnl)
+        pnl = self._calculate_total_pnl(pos, "sl", actual_price=fill_price)
+        await self._close_and_journal(pos, "sl", fill_price, pnl)
         pos["state"] = "closed"
 
         state_label = {"active": "SL initial", "breakeven": "SL breakeven", "trailing": "SL trailing"}.get(state, "SL")
@@ -669,10 +678,10 @@ class PositionMonitor:
     # --- V4: Fee-aware quick exit ---
 
     def _get_rt_fees(self, pos: dict) -> float:
-        """Calculate round-trip fees for a position."""
-        if not self.settings:
-            return 0
-        taker_pct = self.settings.get("fees", {}).get("taker_pct", 0)
+        """Calculate round-trip fees for a position (all bots)."""
+        taker_pct = 0.06  # MEXC default
+        if self.settings:
+            taker_pct = self.settings.get("fees", {}).get("taker_pct", taker_pct)
         position_size = pos.get("position_size_usd", 0)
         return position_size * (taker_pct / 100) * 2
 
@@ -832,7 +841,11 @@ class PositionMonitor:
 
     # --- Helpers calcul ---
 
-    def _calculate_total_pnl(self, pos: dict, close_reason: str) -> float:
+    def _calculate_total_pnl(self, pos: dict, close_reason: str, actual_price: float = 0) -> float:
+        """Calculate total PnL including partial closes.
+        actual_price: real market price at exit (for SL gap-through simulation).
+        For TPs, uses the TP price (limit order fills at exact price).
+        For SL/other, uses actual_price if provided (simulates slippage)."""
         entry = pos["entry_price"]
         direction = pos["direction"]
         original_qty = pos["original_quantity"]
@@ -849,7 +862,14 @@ class PositionMonitor:
             pnl += diff * tp2_qty
 
         remaining_qty = pos["remaining_quantity"]
-        exit_price = pos["tp3"] if close_reason == "tp3" else pos["stop_loss"]
+        # For TP3: limit order fills at exact TP3 price
+        # For SL/other: use actual market price (gap-through simulation)
+        if close_reason == "tp3":
+            exit_price = pos["tp3"]
+        elif actual_price > 0:
+            exit_price = actual_price
+        else:
+            exit_price = pos["stop_loss"]
         diff = (exit_price - entry) if direction == "long" else (entry - exit_price)
         pnl += diff * remaining_qty
 
@@ -858,18 +878,19 @@ class PositionMonitor:
     async def _close_and_journal(self, pos: dict, close_reason: str, exit_price: float, pnl_usd: float):
         now = datetime.utcnow().isoformat()
 
-        # V4: Deduire les frais de commission (taker fee aller-retour)
+        # Deduire les frais de commission (taker fee aller-retour) — tous les bots
         fees_usd = 0.0
-        if self.bot_version == "V4" and self.settings:
-            taker_pct = self.settings.get("fees", {}).get("taker_pct", 0)
-            if taker_pct > 0:
-                position_size = pos.get("position_size_usd", 0)
-                fees_usd = position_size * (taker_pct / 100) * 2  # aller + retour
-                pnl_usd -= fees_usd
-                logger.info(
-                    f"[{self.bot_version}] Fees deducted: ${fees_usd:.4f} "
-                    f"(position ${position_size:.2f} x {taker_pct}% x2)"
-                )
+        taker_pct = 0.06  # MEXC default taker fee
+        if self.settings:
+            taker_pct = self.settings.get("fees", {}).get("taker_pct", taker_pct)
+        if taker_pct > 0:
+            position_size = pos.get("position_size_usd", 0)
+            fees_usd = position_size * (taker_pct / 100) * 2  # aller + retour
+            pnl_usd -= fees_usd
+            logger.info(
+                f"[{self.bot_version}] Fees deducted: ${fees_usd:.4f} "
+                f"(position ${position_size:.2f} x {taker_pct}% x2)"
+            )
 
         pnl_pct = (pnl_usd / pos["margin_required"]) * 100 if pos.get("margin_required") else 0
         result = "win" if pnl_usd > 0 else "loss"
@@ -1004,24 +1025,9 @@ class PositionMonitor:
                 logger.error(f"Erreur callback on_close: {e}")
 
     def _fee_adjusted_breakeven(self, pos: dict) -> float:
-        """Calculate real breakeven = entry + round-trip fees (V4 only).
-        Without this, a 'breakeven' close actually loses the fee amount."""
-        entry = pos["entry_price"]
-        if self.bot_version != "V4" or not self.settings:
-            return entry
-        taker_pct = self.settings.get("fees", {}).get("taker_pct", 0)
-        if taker_pct <= 0:
-            return entry
-        position_size = pos.get("position_size_usd", 0)
-        qty = pos.get("remaining_quantity") or pos.get("original_quantity", 0)
-        if qty <= 0:
-            return entry
-        fees_total = position_size * (taker_pct / 100) * 2  # round-trip
-        fee_per_unit = fees_total / qty
-        if pos["direction"] == "long":
-            return round(entry + fee_per_unit, 8)
-        else:
-            return round(entry - fee_per_unit, 8)
+        """Return entry price as breakeven for all bots.
+        Fees are already deducted in _close_and_journal() — no double-counting."""
+        return pos["entry_price"]
 
     @staticmethod
     def _get_decimals(price: float) -> int:

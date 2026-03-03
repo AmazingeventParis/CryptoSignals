@@ -31,8 +31,8 @@ DIMENSIONS = [
 ]
 
 CACHE_REFRESH_SECONDS = 120  # Refresh cache toutes les 2 minutes
-MIN_TRADES_FOR_MODIFIER = 10
-MODIFIER_CAP_MIN = -10
+MIN_TRADES_FOR_MODIFIER = 15  # hausse (was 10) - plus de data avant de penaliser
+MODIFIER_CAP_MIN = -5         # reduit (was -10) - penalites moins severes en warmup
 MODIFIER_CAP_MAX = 10
 
 
@@ -135,8 +135,8 @@ class AdaptiveLearner:
                 decay_count += 1
                 reasons.append(f"{dim}={val} edge_decay -2pts")
 
-        # 3+ dimensions in decay = suppress signal
-        signal_suppressed = decay_count >= 3
+        # 5+ dimensions in decay = suppress signal (was 3, too aggressive with small samples)
+        signal_suppressed = decay_count >= 5
         if signal_suppressed:
             reasons.append(f"SIGNAL SUPPRESSED: {decay_count} dimensions in edge decay")
 
@@ -157,7 +157,7 @@ class AdaptiveLearner:
         decayed_dims = self.get_decayed_dimensions()
         decayed_keys = {f"{d['dimension']}:{d['value']}" for d in decayed_dims}
         decay_count = sum(1 for dim, val in mappings.items() if val and f"{dim}:{val}" in decayed_keys)
-        return decay_count >= 3
+        return decay_count >= 5
 
     def get_decayed_dimensions(self) -> list[dict]:
         """Retourne les dimensions en edge decay (WR 7d chute > 20% vs 30d)."""
