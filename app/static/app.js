@@ -328,6 +328,7 @@ function switchTab(tab) {
     }
     if (tab === 'compare') loadCompareData();
     if (tab === 'historique') loadHistorique();
+    if (tab === 'flow') loadFlowData();
     if (tab === 'brain') loadBrainData();
 }
 
@@ -2670,4 +2671,284 @@ function renderBrainContexts(contexts) {
 function toggleCtxDetail(idx) {
     const el = document.getElementById(`ctx-detail-${idx}`);
     if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// ============================================================
+// FLOW INTELLIGENCE TAB
+// ============================================================
+async function loadFlowData() {
+    try {
+        const res = await fetch(`${API}/api/flow`);
+        const data = await res.json();
+        if (data.error) {
+            document.getElementById('flow-grid').innerHTML = `<div class="empty-state">${data.error}</div>`;
+            return;
+        }
+        renderFlowGrid(data);
+    } catch (e) {
+        document.getElementById('flow-grid').innerHTML = `<div class="empty-state">Erreur chargement flow data</div>`;
+    }
+}
+
+function renderFlowGrid(allData) {
+    const el = document.getElementById('flow-grid');
+    if (!allData || Object.keys(allData).length === 0) {
+        el.innerHTML = '<div class="empty-state">Aucune donnee de flux disponible</div>';
+        return;
+    }
+
+    const _c = (v, pos, neg, neutral) => v > 0 ? pos : v < 0 ? neg : (neutral || 'var(--text-secondary)');
+    const _s = (v) => v > 0 ? '+' + v : '' + v;
+
+    let html = '';
+    for (const [symbol, data] of Object.entries(allData)) {
+        const shortName = symbol.split('/')[0];
+        const bias = data.flow_bias || 'neutral';
+        const score = data.flow_score || 50;
+        const isStale = data.is_stale;
+
+        let barColor = 'var(--text-secondary)';
+        if (score >= 60) barColor = 'var(--green)';
+        else if (score <= 40) barColor = 'var(--red)';
+
+        html += `<div class="flow-symbol-card">
+            <div class="flow-symbol-header">
+                <span class="flow-symbol-name">${shortName}</span>
+                <div style="display:flex;align-items:center;gap:6px">
+                    ${isStale ? '<span class="flow-stale-badge">stale</span>' : ''}
+                    <span class="flow-bias-badge flow-bias-${bias}">${bias}</span>
+                    <span style="font-size:13px;font-weight:700">${score}</span>
+                </div>
+            </div>
+            <div class="flow-score-bar">
+                <div class="flow-score-fill" style="width:${score}%;background:${barColor}"></div>
+            </div>`;
+
+        // --- CVD ---
+        const cvd = data.cvd || {};
+        html += `<div class="flow-section">
+            <div class="flow-section-title">CVD Divergence</div>
+            <div class="flow-row"><span class="label">Signal</span>
+                <span class="value" style="color:${cvd.signal?.includes('bullish') ? 'var(--green)' : cvd.signal?.includes('bearish') ? 'var(--red)' : 'var(--text-secondary)'}">${cvd.signal || 'neutral'}</span></div>
+            <div class="flow-row"><span class="label">Confidence</span>
+                <span class="value">${((cvd.confidence || 0) * 100).toFixed(0)}%</span></div>
+        </div>`;
+
+        // --- Whales ---
+        const whale = data.whale_trades || {};
+        const wp = whale.whale_pressure || 0;
+        html += `<div class="flow-section">
+            <div class="flow-section-title">Whale Activity</div>
+            <div class="flow-row"><span class="label">Pressure</span>
+                <span class="value" style="color:${_c(wp, 'var(--green)', 'var(--red)')}">${wp > 0 ? '+' : ''}${wp.toFixed(3)}</span></div>
+            <div class="flow-row"><span class="label">Count</span><span class="value">${whale.whale_count || 0}</span></div>
+            <div class="flow-row"><span class="label">Buy / Sell</span>
+                <span class="value"><span style="color:var(--green)">${(whale.whale_buy_vol || 0).toFixed(1)}</span> / <span style="color:var(--red)">${(whale.whale_sell_vol || 0).toFixed(1)}</span></span></div>
+        </div>`;
+
+        // --- VPIN (Microstructure) ---
+        const micro = data.microstructure || {};
+        const vpin = micro.vpin || {};
+        const vpinVal = vpin.vpin || 0.5;
+        const vpinColor = vpinVal > 0.7 ? 'var(--orange)' : vpinVal > 0.6 ? '#d29922' : 'var(--text-secondary)';
+        html += `<div class="flow-section">
+            <div class="flow-section-title">VPIN (Informed Trading)</div>
+            <div class="flow-row"><span class="label">VPIN</span>
+                <span class="value" style="color:${vpinColor};font-weight:700">${(vpinVal * 100).toFixed(0)}%</span></div>
+            <div class="flow-score-bar" style="height:4px"><div class="flow-score-fill" style="width:${vpinVal * 100}%;background:${vpinColor}"></div></div>
+            <div class="flow-row"><span class="label">Bias</span>
+                <span class="value" style="color:${vpin.bias === 'buy' ? 'var(--green)' : vpin.bias === 'sell' ? 'var(--red)' : 'var(--text-secondary)'}">${vpin.bias || 'neutral'}</span></div>
+            <div class="flow-row"><span class="label">Confidence</span>
+                <span class="value">${((vpin.confidence || 0) * 100).toFixed(0)}%</span></div>
+        </div>`;
+
+        // --- Sweep Detection ---
+        const sweep = micro.sweep || {};
+        if (sweep.sweep_detected) {
+            html += `<div class="flow-section" style="border-left:2px solid var(--orange)">
+                <div class="flow-section-title" style="color:var(--orange)">SWEEP DETECTED</div>
+                <div class="flow-row"><span class="label">Direction</span>
+                    <span class="value" style="color:${sweep.sweep_direction === 'buy' ? 'var(--green)' : 'var(--red)'};font-weight:700">${(sweep.sweep_direction || '').toUpperCase()}</span></div>
+                <div class="flow-row"><span class="label">Intensity</span>
+                    <span class="value">${((sweep.sweep_intensity || 0) * 100).toFixed(0)}%</span></div>
+                <div class="flow-row"><span class="label">Levels</span>
+                    <span class="value">${sweep.sweep_levels || 0}</span></div>
+            </div>`;
+        }
+
+        // --- Tape Speed ---
+        const tape = micro.tape_speed || {};
+        const tapeIntensity = tape.intensity || 'low';
+        const tapeColor = tapeIntensity === 'high' ? 'var(--orange)' : tapeIntensity === 'normal' ? 'var(--green)' : 'var(--text-secondary)';
+        html += `<div class="flow-section">
+            <div class="flow-section-title">Tape Speed</div>
+            <div class="flow-row"><span class="label">TPS</span>
+                <span class="value">${(tape.tps_current || 0).toFixed(1)}/s</span></div>
+            <div class="flow-row"><span class="label">Acceleration</span>
+                <span class="value" style="color:${tapeColor}">${(tape.acceleration || 1).toFixed(1)}x <span style="font-size:11px">(${tapeIntensity})</span></span></div>
+        </div>`;
+
+        // --- Delta bars ---
+        const deltas = data.deltas || {};
+        html += `<div class="flow-section">
+            <div class="flow-section-title">Buy/Sell Delta</div>`;
+        for (const [tf, d] of Object.entries(deltas)) {
+            const total = (d.buy_vol || 0) + (d.sell_vol || 0);
+            const buyPct = total > 0 ? (d.buy_vol / total * 100) : 50;
+            html += `<div class="flow-row"><span class="label">${tf}</span>
+                <span class="value" style="color:${_c(d.delta, 'var(--green)', 'var(--red)')}">${d.delta > 0 ? '+' : ''}${(d.delta || 0).toFixed(1)}</span></div>
+            <div class="flow-delta-bar">
+                <div class="flow-delta-buy" style="width:${buyPct.toFixed(1)}%"></div>
+                <div class="flow-delta-sell" style="width:${(100-buyPct).toFixed(1)}%"></div>
+            </div>`;
+        }
+        html += `</div>`;
+
+        // --- Taker Buy/Sell Volume ---
+        const taker = data.taker_volume || {};
+        if (taker.ratio) {
+            const tr = taker.ratio;
+            html += `<div class="flow-section">
+                <div class="flow-section-title">Taker Buy/Sell</div>
+                <div class="flow-row"><span class="label">Ratio</span>
+                    <span class="value" style="color:${tr > 1.15 ? 'var(--green)' : tr < 0.85 ? 'var(--red)' : 'var(--text-secondary)'}; font-weight:700">${tr.toFixed(3)}</span></div>
+                <div class="flow-row"><span class="label">Buy Vol</span>
+                    <span class="value" style="color:var(--green)">${(taker.buy_vol || 0).toFixed(0)}</span></div>
+                <div class="flow-row"><span class="label">Sell Vol</span>
+                    <span class="value" style="color:var(--red)">${(taker.sell_vol || 0).toFixed(0)}</span></div>
+            </div>`;
+        }
+
+        // --- Smart Money Divergence ---
+        const sm = data.smart_money || {};
+        if (sm.global_ratio) {
+            const divColor = sm.divergence ? 'var(--orange)' : 'var(--text-secondary)';
+            html += `<div class="flow-section"${sm.divergence ? ' style="border-left:2px solid var(--orange)"' : ''}>
+                <div class="flow-section-title"${sm.divergence ? ' style="color:var(--orange)"' : ''}>Smart Money ${sm.divergence ? 'DIVERGENCE' : ''}</div>
+                <div class="flow-row"><span class="label">Crowd</span>
+                    <span class="value" style="color:${sm.crowd_bias === 'long' ? 'var(--green)' : sm.crowd_bias === 'short' ? 'var(--red)' : 'var(--text-secondary)'}">${sm.crowd_bias} (${sm.global_ratio?.toFixed(2)})</span></div>
+                <div class="flow-row"><span class="label">Smart</span>
+                    <span class="value" style="color:${sm.smart_bias === 'long' ? 'var(--green)' : sm.smart_bias === 'short' ? 'var(--red)' : 'var(--text-secondary)'}">${sm.smart_bias} (${sm.top_account_ratio?.toFixed(2)})</span></div>
+                ${sm.divergence ? `<div class="flow-signal-item" style="border-color:var(--orange)">${sm.signal === 'smart_long' ? 'Smart money LONG vs crowd short' : 'Smart money SHORT vs crowd long'}</div>` : ''}
+            </div>`;
+        }
+
+        // --- OI Divergence ---
+        const oi = data.oi_divergence || {};
+        if (oi.signal && oi.signal !== 'neutral') {
+            const oiSignalMap = {
+                'bullish_continuation': { color: 'var(--green)', icon: '' },
+                'bearish_continuation': { color: 'var(--red)', icon: '' },
+                'fake_pump': { color: 'var(--orange)', icon: '' },
+                'capitulation': { color: '#d29922', icon: '' }
+            };
+            const oiStyle = oiSignalMap[oi.signal] || { color: 'var(--text-secondary)', icon: '' };
+            html += `<div class="flow-section" style="border-left:2px solid ${oiStyle.color}">
+                <div class="flow-section-title" style="color:${oiStyle.color}">OI Divergence: ${oi.signal.replace('_', ' ')}</div>
+                <div class="flow-row"><span class="label">OI change</span>
+                    <span class="value">${_s((oi.oi_change || 0).toFixed(1))}%</span></div>
+                ${oi.price_change !== undefined ? `<div class="flow-row"><span class="label">Price change</span>
+                    <span class="value" style="color:${_c(oi.price_change, 'var(--green)', 'var(--red)')}">${_s(oi.price_change.toFixed(2))}%</span></div>` : ''}
+                <div class="flow-row"><span class="label" style="font-size:11px;opacity:0.7">${oi.interpretation || ''}</span></div>
+            </div>`;
+        }
+
+        // --- Funding Momentum ---
+        const fm = data.funding_momentum || {};
+        if (fm.current !== undefined) {
+            const fmColor = fm.extreme ? 'var(--orange)' : fm.trend === 'rising' ? 'var(--green)' : fm.trend === 'falling' ? 'var(--red)' : 'var(--text-secondary)';
+            html += `<div class="flow-section">
+                <div class="flow-section-title">Funding Momentum</div>
+                <div class="flow-row"><span class="label">Rate</span>
+                    <span class="value" style="color:${fmColor}">${(fm.current * 100).toFixed(4)}%</span></div>
+                <div class="flow-row"><span class="label">Trend</span>
+                    <span class="value" style="color:${fmColor}">${fm.trend}${fm.extreme ? ' (EXTREME)' : ''}</span></div>
+            </div>`;
+        }
+
+        // --- Basis ---
+        const basis = data.basis || {};
+        if (basis.basis_pct !== undefined) {
+            const bColor = basis.basis_pct > 0.05 ? 'var(--green)' : basis.basis_pct < -0.05 ? 'var(--red)' : 'var(--text-secondary)';
+            html += `<div class="flow-section">
+                <div class="flow-section-title">Spot/Futures Basis</div>
+                <div class="flow-row"><span class="label">Basis</span>
+                    <span class="value" style="color:${bColor}">${_s((basis.basis_pct * 100).toFixed(3))}%</span></div>
+                <div class="flow-row"><span class="label">State</span>
+                    <span class="value">${basis.basis_pct > 0 ? 'Contango' : basis.basis_pct < 0 ? 'Backwardation' : 'Flat'}</span></div>
+            </div>`;
+        }
+
+        // --- L/S Ratio (global) ---
+        const ls = data.long_short_ratio || {};
+        if (ls.ratio) {
+            html += `<div class="flow-section">
+                <div class="flow-section-title">Binance L/S (Global)</div>
+                <div class="flow-row"><span class="label">Ratio</span><span class="value">${ls.ratio.toFixed(2)}</span></div>
+                <div class="flow-row"><span class="label">Long / Short</span>
+                    <span class="value"><span style="color:var(--green)">${ls.long_pct?.toFixed(1) || '--'}%</span> / <span style="color:var(--red)">${ls.short_pct?.toFixed(1) || '--'}%</span></span></div>
+                ${ls.ratio > 2.5 ? '<div class="flow-signal-item" style="border-color:var(--orange)">Contrarian: crowd long</div>' : ''}
+                ${ls.ratio < 0.4 ? '<div class="flow-signal-item" style="border-color:var(--orange)">Contrarian: crowd short</div>' : ''}
+            </div>`;
+        }
+
+        // --- Session Edge ---
+        const se = data.session_edge || {};
+        if (se.session) {
+            const seColor = se.modifier > 0 ? 'var(--green)' : se.modifier < 0 ? 'var(--red)' : 'var(--text-secondary)';
+            html += `<div class="flow-section">
+                <div class="flow-section-title">Session Edge</div>
+                <div class="flow-row"><span class="label">Session</span><span class="value">${se.session}</span></div>
+                <div class="flow-row"><span class="label">Win Rate</span>
+                    <span class="value" style="color:${seColor}">${se.win_rate !== undefined ? (se.win_rate * 100).toFixed(0) + '%' : 'n/a'}</span></div>
+                <div class="flow-row"><span class="label">Trades</span><span class="value">${se.total_trades || 0}</span></div>
+                ${se.gate === false ? '<div class="flow-signal-item" style="border-color:var(--red)">BLOCKED: low WR this session</div>' : ''}
+                ${se.modifier > 0 ? `<div class="flow-signal-item" style="border-color:var(--green)">+${se.modifier} pts (high WR session)</div>` : ''}
+                ${se.modifier < 0 ? `<div class="flow-signal-item" style="border-color:var(--red)">${se.modifier} pts (low WR session)</div>` : ''}
+            </div>`;
+        }
+
+        // --- Liquidation Levels ---
+        const liq = data.liquidation_levels || {};
+        if (liq.levels) {
+            html += `<div class="flow-section">
+                <div class="flow-section-title">Liquidation Levels</div>`;
+            for (const [lev, l] of Object.entries(liq.levels)) {
+                html += `<div class="flow-row"><span class="label">${lev}</span>
+                    <span class="value"><span style="color:var(--green)">${l.long_liq?.toFixed(2)}</span> &larr; ${l.long_dist_pct?.toFixed(1)}% | ${l.short_dist_pct?.toFixed(1)}% &rarr; <span style="color:var(--red)">${l.short_liq?.toFixed(2)}</span></span></div>`;
+            }
+            html += `</div>`;
+        }
+
+        // --- Recent Liquidations ---
+        const recentLiqs = data.recent_liquidations || [];
+        if (recentLiqs.length > 0) {
+            html += `<div class="flow-section">
+                <div class="flow-section-title">Recent Liquidations</div>
+                <div class="flow-liq-feed">`;
+            for (const rl of recentLiqs.slice(0, 5)) {
+                const cls = rl.side === 'SELL' ? 'flow-liq-long' : 'flow-liq-short';
+                const label = rl.side === 'SELL' ? 'LONG liq' : 'SHORT liq';
+                html += `<div class="flow-liq-item ${cls}">
+                    <span>${label} @ ${rl.price?.toFixed(2)}</span>
+                    <span>$${(rl.notional || 0).toFixed(0)}</span>
+                </div>`;
+            }
+            html += `</div></div>`;
+        }
+
+        // --- Flow Signals Summary ---
+        const signals = data.flow_signals || [];
+        if (signals.length > 0) {
+            html += `<div class="flow-signals-list">`;
+            for (const sig of signals) {
+                html += `<div class="flow-signal-item">${sig}</div>`;
+            }
+            html += `</div>`;
+        }
+
+        html += `</div>`;
+    }
+
+    el.innerHTML = html;
 }

@@ -100,7 +100,7 @@ scalping:
 sniper:
   direction_gate: true
   direction_min_score: 65
-  obi_gate: true
+  obi_gate: false                 # remplace par flow intelligence (tick data > orderbook snapshot)
   obi_min_threshold: 0.15
   momentum_gate: true
   momentum_min_candles: 3
@@ -187,12 +187,30 @@ profit_protection:
   activation_fee_mult: 999.0
   giveback_pct: 60
 
-# --- V4 Features (toutes OFF sauf stale_exit) ---
+# --- Flow Intelligence v2 ---
+flow_intelligence:
+  # Hard Gates (block signals)
+  cvd_gate: true
+  cvd_min_confidence: 0.3
+  whale_gate: true
+  whale_pressure_threshold: 0.5
+  whale_multiplier: 3.0
+  sweep_gate: true
+  oi_divergence_gate: true
+  smart_money_gate: true
+  # Modifiers (bonus/malus points)
+  ls_ratio_enabled: true
+  ls_extreme_threshold: 2.5
+  ls_modifier_points: 3
+  liquidation_levels_enabled: true
+  flow_confirmation_bonus: 5
+
+# --- V4 Features (toutes OFF sauf stale_exit + order_flow) ---
 v4_features:
   regime_detection: false
   mtf_confluence: false
   vwap_confluence: false
-  order_flow: false
+  order_flow: true
   adaptive_learning: false
   stale_exit: true
   dynamic_sl: false

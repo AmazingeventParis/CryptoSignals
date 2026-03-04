@@ -140,7 +140,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
                     direction["signals"], tradeability["score"]
                 )
 
-        # Gate 2: OBI (Order Book Imbalance)
+        # Gate 2: OBI (Order Book Imbalance) — legacy, replaced by flow intelligence
         if sniper_cfg.get("obi_gate", False):
             bid_d = orderbook.get("bid_depth", 0)
             ask_d = orderbook.get("ask_depth", 0)
@@ -160,6 +160,106 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
                         f"Sniper: OBI {obi:.2f} > {-obi_thresh} pour short",
                         direction["signals"], tradeability["score"]
                     )
+
+        # Gate 2b: Flow Intelligence Gates — replaces OBI when enabled
+        flow_cfg = s.get("flow_intelligence", {})
+        flow_data = market_data_dict.get("flow_intelligence")
+        if flow_data and v4f.get("order_flow", False) and not flow_data.get("is_stale", True):
+            # CVD Gate: block if CVD diverges against direction
+            if flow_cfg.get("cvd_gate", False):
+                cvd_info = flow_data.get("cvd", {})
+                cvd_signal = cvd_info.get("signal", "neutral")
+                cvd_confidence = cvd_info.get("confidence", 0)
+                cvd_min_conf = flow_cfg.get("cvd_min_confidence", 0.3)
+
+                if cvd_confidence >= cvd_min_conf:
+                    if direction_bias == "long" and cvd_signal == "bearish_divergence":
+                        return _no_trade(
+                            symbol, mode,
+                            f"Flow: CVD bearish divergence blocks long (conf={cvd_confidence:.2f})",
+                            direction["signals"], tradeability["score"]
+                        )
+                    elif direction_bias == "short" and cvd_signal == "bullish_divergence":
+                        return _no_trade(
+                            symbol, mode,
+                            f"Flow: CVD bullish divergence blocks short (conf={cvd_confidence:.2f})",
+                            direction["signals"], tradeability["score"]
+                        )
+
+            # Whale Gate: block if whale pressure opposes direction
+            if flow_cfg.get("whale_gate", False):
+                whale_info = flow_data.get("whale_trades", {})
+                whale_pressure = whale_info.get("whale_pressure", 0)
+                whale_thresh = flow_cfg.get("whale_pressure_threshold", 0.5)
+
+                if direction_bias == "long" and whale_pressure < -whale_thresh:
+                    return _no_trade(
+                        symbol, mode,
+                        f"Flow: whale sell pressure {whale_pressure:.2f} blocks long",
+                        direction["signals"], tradeability["score"]
+                    )
+                elif direction_bias == "short" and whale_pressure > whale_thresh:
+                    return _no_trade(
+                        symbol, mode,
+                        f"Flow: whale buy pressure {whale_pressure:.2f} blocks short",
+                        direction["signals"], tradeability["score"]
+                    )
+
+            # Sweep Gate: block if aggressive sweep opposes direction
+            if flow_cfg.get("sweep_gate", False):
+                sweep = flow_data.get("microstructure", {}).get("sweep", {})
+                if sweep.get("sweep_detected") and sweep.get("sweep_intensity", 0) > 0.4:
+                    sd = sweep["sweep_direction"]
+                    if direction_bias == "long" and sd == "sell":
+                        return _no_trade(
+                            symbol, mode,
+                            f"Flow: SELL SWEEP blocks long (intensity={sweep['sweep_intensity']:.2f})",
+                            direction["signals"], tradeability["score"]
+                        )
+                    elif direction_bias == "short" and sd == "buy":
+                        return _no_trade(
+                            symbol, mode,
+                            f"Flow: BUY SWEEP blocks short (intensity={sweep['sweep_intensity']:.2f})",
+                            direction["signals"], tradeability["score"]
+                        )
+
+            # OI Divergence Gate: block longs on fake pump
+            if flow_cfg.get("oi_divergence_gate", False):
+                oi_div = flow_data.get("oi_divergence", {})
+                oi_sig = oi_div.get("signal", "neutral")
+                if direction_bias == "long" and oi_sig == "fake_pump":
+                    return _no_trade(
+                        symbol, mode,
+                        f"Flow: OI divergence fake pump blocks long (OI {oi_div.get('oi_change', 0):+.1f}%)",
+                        direction["signals"], tradeability["score"]
+                    )
+
+            # Smart Money Gate: block if smart money strongly opposes
+            if flow_cfg.get("smart_money_gate", False):
+                sm = flow_data.get("smart_money", {})
+                if sm.get("divergence"):
+                    if direction_bias == "long" and sm.get("signal") == "smart_short":
+                        return _no_trade(
+                            symbol, mode,
+                            f"Flow: smart money SHORT blocks long (top ratio={sm.get('top_account_ratio', 0):.2f})",
+                            direction["signals"], tradeability["score"]
+                        )
+                    elif direction_bias == "short" and sm.get("signal") == "smart_long":
+                        return _no_trade(
+                            symbol, mode,
+                            f"Flow: smart money LONG blocks short (top ratio={sm.get('top_account_ratio', 0):.2f})",
+                            direction["signals"], tradeability["score"]
+                        )
+
+            # Session Edge Gate
+            session_edge = flow_data.get("session_edge", {})
+            if session_edge.get("gate", False):
+                se_stats = session_edge.get("stats", {})
+                return _no_trade(
+                    symbol, mode,
+                    f"Session gate: WR {se_stats.get('wr', 0)}% in {session_edge.get('session', '?')} session ({se_stats.get('total', 0)} trades)",
+                    direction["signals"], tradeability["score"]
+                )
 
         # Gate 3: Momentum (last 4 candles)
         if sniper_cfg.get("momentum_gate", False):
@@ -340,6 +440,8 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
     learning_modifier = 0
     learning_reasons = []
     _candle_pattern = "none"
+    flow_modifier = 0
+    flow_modifier_reasons = []
     if is_v4:
         final_score += mtf_modifier + vwap_modifier
 
@@ -366,6 +468,139 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
                 }
                 learning_modifier, learning_reasons = adaptive_learner.get_total_modifier(signal_ctx)
                 final_score += learning_modifier
+
+        # Flow Intelligence Modifiers (v2 — all sources)
+        flow_data = market_data_dict.get("flow_intelligence")
+        flow_cfg = s.get("flow_intelligence", {})
+        if flow_data and v4f.get("order_flow", False) and not flow_data.get("is_stale", True):
+            _dir = entry["direction"]
+
+            # +5 pts if CVD confirms direction
+            cvd_info = flow_data.get("cvd", {})
+            cvd_signal = cvd_info.get("signal", "neutral")
+            cvd_conf = cvd_info.get("confidence", 0)
+            bonus = flow_cfg.get("flow_confirmation_bonus", 5)
+            if _dir == "long" and cvd_signal == "bullish_confirmation" and cvd_conf >= 0.2:
+                flow_modifier += bonus
+                flow_modifier_reasons.append(f"CVD confirms long +{bonus}")
+            elif _dir == "short" and cvd_signal == "bearish_confirmation" and cvd_conf >= 0.2:
+                flow_modifier += bonus
+                flow_modifier_reasons.append(f"CVD confirms short +{bonus}")
+
+            # +5 pts if VPIN confirms direction (informed traders aligned)
+            vpin = flow_data.get("microstructure", {}).get("vpin", {})
+            vpin_val = vpin.get("vpin", 0.5)
+            vpin_bias = vpin.get("bias", "neutral")
+            vpin_conf = vpin.get("confidence", 0)
+            if vpin_val > 0.6 and vpin_conf >= 0.3:
+                if (_dir == "long" and vpin_bias == "buy") or (_dir == "short" and vpin_bias == "sell"):
+                    flow_modifier += 5
+                    flow_modifier_reasons.append(f"VPIN {vpin_val:.2f} confirms {_dir} +5")
+
+            # +5 pts if sweep aligns with direction
+            sweep = flow_data.get("microstructure", {}).get("sweep", {})
+            if sweep.get("sweep_detected"):
+                sd = sweep.get("sweep_direction", "none")
+                if (_dir == "long" and sd == "buy") or (_dir == "short" and sd == "sell"):
+                    pts = min(5, int(sweep.get("sweep_intensity", 0) * 8))
+                    if pts > 0:
+                        flow_modifier += pts
+                        flow_modifier_reasons.append(f"Sweep {sd} confirms {_dir} +{pts}")
+
+            # +4 pts if OI confirms direction
+            oi_div = flow_data.get("oi_divergence", {})
+            oi_sig = oi_div.get("signal", "neutral")
+            if _dir == "long" and oi_sig == "bullish_continuation":
+                flow_modifier += 4
+                flow_modifier_reasons.append("OI bullish continuation +4")
+            elif _dir == "short" and oi_sig == "bearish_continuation":
+                flow_modifier += 4
+                flow_modifier_reasons.append("OI bearish continuation +4")
+
+            # +3 pts if taker volume confirms
+            taker = flow_data.get("taker_volume", {})
+            taker_ratio = taker.get("ratio", 1)
+            if _dir == "long" and taker_ratio > 1.15:
+                flow_modifier += 3
+                flow_modifier_reasons.append(f"Taker buy {taker_ratio:.2f} +3")
+            elif _dir == "short" and taker_ratio < 0.85:
+                flow_modifier += 3
+                flow_modifier_reasons.append(f"Taker sell {taker_ratio:.2f} +3")
+
+            # +3 pts if L/S ratio is contrarian (crowd on wrong side)
+            ls_info = flow_data.get("long_short_ratio", {})
+            ls_ratio_val = ls_info.get("ratio", 1)
+            ls_thresh = flow_cfg.get("ls_extreme_threshold", 2.5)
+            ls_pts = flow_cfg.get("ls_modifier_points", 3)
+            if flow_cfg.get("ls_ratio_enabled", False):
+                if _dir == "short" and ls_ratio_val > ls_thresh:
+                    flow_modifier += ls_pts
+                    flow_modifier_reasons.append(f"L/S contrarian long {ls_ratio_val:.1f} +{ls_pts}")
+                elif _dir == "long" and ls_ratio_val < (1 / ls_thresh):
+                    flow_modifier += ls_pts
+                    flow_modifier_reasons.append(f"L/S contrarian short {ls_ratio_val:.2f} +{ls_pts}")
+
+            # +3 pts tape speed acceleration + aligned flow
+            tape = flow_data.get("microstructure", {}).get("tape_speed", {})
+            if tape.get("acceleration", 1) > 3.0:
+                d5m = flow_data.get("deltas", {}).get("5m", {})
+                if _dir == "long" and d5m.get("ratio", 0.5) > 0.55:
+                    flow_modifier += 3
+                    flow_modifier_reasons.append(f"Tape accel {tape['acceleration']:.1f}x + buy +3")
+                elif _dir == "short" and d5m.get("ratio", 0.5) < 0.45:
+                    flow_modifier += 3
+                    flow_modifier_reasons.append(f"Tape accel {tape['acceleration']:.1f}x + sell +3")
+            elif tape.get("acceleration", 1) < 0.3:
+                flow_modifier -= 3
+                flow_modifier_reasons.append("Dead tape -3")
+
+            # +3 pts funding momentum contrarian
+            fm = flow_data.get("funding_momentum", {})
+            if fm.get("extreme"):
+                if _dir == "short" and fm.get("current", 0) > 0.05:
+                    flow_modifier += 3
+                    flow_modifier_reasons.append(f"Extreme funding short contrarian +3")
+                elif _dir == "long" and fm.get("current", 0) < -0.03:
+                    flow_modifier += 3
+                    flow_modifier_reasons.append(f"Extreme funding long contrarian +3")
+
+            # +2 pts basis confirms
+            basis = flow_data.get("basis", {})
+            basis_pct = basis.get("basis_pct", 0)
+            if _dir == "long" and basis_pct > 0.05:
+                flow_modifier += 2
+                flow_modifier_reasons.append(f"Basis premium {basis_pct:.3f}% +2")
+            elif _dir == "short" and basis_pct < -0.03:
+                flow_modifier += 2
+                flow_modifier_reasons.append(f"Basis discount {basis_pct:.3f}% +2")
+
+            # +2 pts if near liquidation cluster
+            if flow_cfg.get("liquidation_levels_enabled", False):
+                liq_info = flow_data.get("liquidation_levels", {})
+                levels = liq_info.get("levels", {})
+                for lev_key in ("10x", "25x"):
+                    lev_data = levels.get(lev_key, {})
+                    if _dir == "long":
+                        dist = lev_data.get("short_dist_pct", 999)
+                        if 0 < dist < 1.5:
+                            flow_modifier += 2
+                            flow_modifier_reasons.append(f"Near {lev_key} short liq {dist:.1f}% +2")
+                            break
+                    elif _dir == "short":
+                        dist = lev_data.get("long_dist_pct", 999)
+                        if 0 < dist < 1.5:
+                            flow_modifier += 2
+                            flow_modifier_reasons.append(f"Near {lev_key} long liq {dist:.1f}% +2")
+                            break
+
+            # Session edge modifier
+            se = flow_data.get("session_edge", {})
+            se_mod = se.get("modifier", 0)
+            if se_mod != 0:
+                flow_modifier += se_mod
+                flow_modifier_reasons.append(f"Session {se.get('session', '?')} edge {se_mod:+d}")
+
+            final_score += flow_modifier
 
     final_score = max(0, min(100, final_score))
 
@@ -395,6 +630,8 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
         reasons.append(f"VWAP confluence {vwap_modifier:+d}pts")
     if learning_modifier != 0:
         reasons.append(f"Learning {learning_modifier:+d}pts")
+    if flow_modifier != 0:
+        reasons.append(f"Flow {flow_modifier:+d}pts ({', '.join(flow_modifier_reasons)})")
 
     # V4 only: Build indicator snapshot for learning context propagation
     _indicator_snapshot = {}
@@ -454,6 +691,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
             "regime_confidence": regime_info.get("confidence", 0),
             "mtf_confluence": mtf_confluence,
             "learning_modifier": learning_modifier,
+            "flow_modifier": flow_modifier,
             "candle_pattern": _candle_pattern,
             "vwap_modifier": vwap_modifier,
             "_entry_atr": _safe_val(atr_current),

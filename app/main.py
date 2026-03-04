@@ -20,6 +20,9 @@ from app.core.adaptive_learner import AdaptiveLearner
 from app.core.signal_engine import register_adaptive_learner
 from app.core.correlation import CorrelationGuard
 from app.core.order_flow import OrderFlowTracker
+from app.core.microstructure import MicrostructureAnalyzer
+from app.core.flow_intelligence import FlowIntelligence
+from app.core.session_edge import SessionEdge
 
 # Auth config
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
@@ -81,16 +84,21 @@ position_monitor_v4.set_adaptive_learner(adaptive_learner_v4)
 # V4 only: correlation guard
 correlation_guard_v4 = CorrelationGuard()
 paper_trader_v4.set_correlation_guard(correlation_guard_v4)
-# V4 only: order flow tracker
+# V4 only: order flow + microstructure + flow intelligence + session edge
 v4_pairs = get_enabled_pairs(SETTINGS_V4)
 order_flow_v4 = OrderFlowTracker(v4_pairs)
+microstructure_v4 = MicrostructureAnalyzer(order_flow_v4)
+flow_intelligence_v4 = FlowIntelligence(order_flow_v4, microstructure_v4, v4_pairs)
+session_edge_v4 = SessionEdge("V4")
+scanner_v4.set_flow_intelligence(flow_intelligence_v4)
+scanner_v4._session_edge_ref = session_edge_v4
 
 # Export pour routes.py
 bot_instances = {
     "V1": {"scanner": scanner_v1, "paper_trader": paper_trader_v1, "position_monitor": position_monitor_v1},
     "V2": {"scanner": scanner_v2, "paper_trader": paper_trader_v2, "position_monitor": position_monitor_v2},
     "V3": {"scanner": scanner_v3, "paper_trader": paper_trader_v3, "position_monitor": position_monitor_v3},
-    "V4": {"scanner": scanner_v4, "paper_trader": paper_trader_v4, "position_monitor": position_monitor_v4, "adaptive_learner": adaptive_learner_v4, "correlation_guard": correlation_guard_v4, "order_flow": order_flow_v4},
+    "V4": {"scanner": scanner_v4, "paper_trader": paper_trader_v4, "position_monitor": position_monitor_v4, "adaptive_learner": adaptive_learner_v4, "correlation_guard": correlation_guard_v4, "order_flow": order_flow_v4, "microstructure": microstructure_v4, "flow_intelligence": flow_intelligence_v4, "session_edge": session_edge_v4},
 }
 
 
@@ -132,9 +140,20 @@ async def lifespan(app: FastAPI):
     monitor_v4_task = asyncio.create_task(position_monitor_v4.start())
     logger.info("Position Monitors V1+V2+V3+V4 lances en arriere-plan")
 
-    # V4 only: Start order flow tracker
+    # V4 only: Start order flow + flow intelligence + session edge
     order_flow_task = asyncio.create_task(order_flow_v4.start())
-    logger.info("Order Flow Tracker V4 lance en arriere-plan")
+    logger.info("Order Flow Tracker V4 lance")
+    flow_intel_task = asyncio.create_task(flow_intelligence_v4.start())
+    logger.info("Flow Intelligence v2 lance")
+    await session_edge_v4.refresh_cache()
+    logger.info("Session Edge V4 cache charge")
+
+    # Session edge refresh every 10 minutes
+    async def _session_edge_refresh_loop():
+        while True:
+            await asyncio.sleep(600)
+            await session_edge_v4.refresh_cache()
+    session_edge_task = asyncio.create_task(_session_edge_refresh_loop())
 
     yield
 
@@ -156,6 +175,9 @@ async def lifespan(app: FastAPI):
     monitor_v2_task.cancel()
     monitor_v3_task.cancel()
     monitor_v4_task.cancel()
+    session_edge_task.cancel()
+    await flow_intelligence_v4.stop()
+    flow_intel_task.cancel()
     await order_flow_v4.stop()
     order_flow_task.cancel()
     await market_data.close()

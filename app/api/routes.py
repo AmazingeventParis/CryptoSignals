@@ -403,6 +403,37 @@ async def advanced_stats(bot_version: str = Query(None)):
     }
 
 
+@router.get("/flow/{symbol}")
+async def get_flow_symbol(symbol: str):
+    """Flow intelligence pour un symbol V4."""
+    symbol_fmt = symbol.replace("-", "/")
+    bots = _get_bot_instances()
+    fi = bots.get("V4", {}).get("flow_intelligence")
+    if not fi:
+        return {"error": "Flow Intelligence non disponible"}
+    return fi.get_intelligence(symbol_fmt)
+
+
+@router.get("/flow")
+async def get_flow_all():
+    """Flow intelligence pour tous les symbols V4."""
+    bots = _get_bot_instances()
+    fi = bots.get("V4", {}).get("flow_intelligence")
+    if not fi:
+        return {"error": "Flow Intelligence non disponible"}
+    return fi.get_all_intelligence()
+
+
+@router.get("/session-edge")
+async def get_session_edge():
+    """Session edge stats for all symbols V4."""
+    bots = _get_bot_instances()
+    se = bots.get("V4", {}).get("session_edge")
+    if not se:
+        return {"error": "Session Edge non disponible"}
+    return {"stats": se.get_all_stats()}
+
+
 @router.get("/sentiment")
 async def get_sentiment():
     from app.services.sentiment import sentiment_analyzer

@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="/static/style.css?v=74">
+    <link rel="stylesheet" href="/static/style.css?v=76">
 </head>
 <body>
     <div id="app">
@@ -148,6 +148,7 @@
                 <button class="tab" onclick="switchTab('compare')"><span class="compare-badge-sm">VS</span> Comparaison</button>
                 <button class="tab" onclick="switchTab('historique')">Historique</button>
                 <button class="tab" onclick="switchTab('pairs')">Paires</button>
+                <button class="tab" onclick="switchTab('flow')"><span class="v4-badge-sm">V4</span> Flow</button>
                 <button class="tab" onclick="switchTab('brain')"><span class="v4-badge-sm">V4</span> Brain</button>
             </div>
 
@@ -333,6 +334,17 @@
                 </div>
             </div>
 
+            <!-- Flow Tab (V4 Flow Intelligence) -->
+            <div id="tab-flow" class="tab-content">
+                <div class="flow-header">
+                    <h2>Flow Intelligence — Donnees temps reel</h2>
+                    <span class="flow-refresh-info">Rafraichi toutes les 15s</span>
+                </div>
+                <div id="flow-grid" class="flow-grid">
+                    <div class="empty-state">Chargement des donnees de flux...</div>
+                </div>
+            </div>
+
             <!-- Brain Tab (V4 Adaptive Learning) -->
             <div id="tab-brain" class="tab-content">
                 <div class="brain-section">
@@ -431,6 +443,6 @@
         caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     </script>
-    <script src="/static/app.js?v=74"></script>
+    <script src="/static/app.js?v=76"></script>
 </body>
 </html>

@@ -2,11 +2,13 @@
 Order Flow Tracker : Analyse les trades en temps reel via WebSocket MEXC push.deal.
 Calcule le delta roulant (buy_vol - sell_vol) sur 1m, 5m, 15m.
 Detecte les divergences CVD (Cumulative Volume Delta) vs prix.
+Whale detection + aggressive ratio.
 V4 only.
 """
 import asyncio
 import json
 import logging
+import statistics
 from collections import deque
 from datetime import datetime
 
@@ -23,7 +25,7 @@ class OrderFlowTracker:
         self.running = False
         self._ws_tasks: dict[str, asyncio.Task] = {}
 
-        # Per-symbol rolling trade data: deque of (timestamp, volume, is_buy)
+        # Per-symbol rolling trade data: deque of (timestamp, volume, is_buy, price)
         self._trades: dict[str, deque] = {s: deque(maxlen=5000) for s in symbols}
 
         # Cached deltas
@@ -92,7 +94,7 @@ class OrderFlowTracker:
             ts = float(deal.get("t", 0)) / 1000 if deal.get("t") else datetime.utcnow().timestamp()
 
             if price > 0 and volume > 0:
-                self._trades[symbol].append((ts, volume, is_buy))
+                self._trades[symbol].append((ts, volume, is_buy, price))
                 self._last_prices[symbol] = price
         except Exception:
             pass
@@ -105,7 +107,7 @@ class OrderFlowTracker:
 
         buy_vol = 0
         sell_vol = 0
-        for ts, vol, is_buy in trades:
+        for ts, vol, is_buy, _price in trades:
             if ts >= cutoff:
                 if is_buy:
                     buy_vol += vol
@@ -139,7 +141,7 @@ class OrderFlowTracker:
         """
         trades = self._trades.get(symbol, deque())
         if len(trades) < 20:
-            return {"divergence": 0, "signal": "neutral"}
+            return {"divergence": 0, "signal": "neutral", "confidence": 0}
 
         now = datetime.utcnow().timestamp()
 
@@ -152,34 +154,172 @@ class OrderFlowTracker:
         recent_prices = []
         prev_prices = []
 
-        for ts, vol, is_buy in trades:
+        for ts, vol, is_buy, price in trades:
             if ts >= mid:
                 recent_delta += vol if is_buy else -vol
-                if symbol in self._last_prices:
-                    recent_prices.append(self._last_prices[symbol])
+                recent_prices.append(price)
             elif ts >= cutoff:
                 prev_delta += vol if is_buy else -vol
+                prev_prices.append(price)
 
-        if not recent_prices:
-            return {"divergence": 0, "signal": "neutral"}
+        if not recent_prices or not prev_prices:
+            return {"divergence": 0, "signal": "neutral", "confidence": 0}
 
-        # Simplified CVD divergence detection
         delta_change = recent_delta - prev_delta
+        price_change = (recent_prices[-1] - prev_prices[0]) / max(prev_prices[0], 1e-8)
 
-        # Price direction (we only have current price, approximate)
-        current_price = self._last_prices.get(symbol, 0)
-        if current_price <= 0:
-            return {"divergence": 0, "signal": "neutral"}
+        # Bearish divergence: price rising but CVD falling
+        if price_change > 0.001 and delta_change < 0 and recent_delta < 0:
+            confidence = min(1.0, abs(delta_change) / 500)
+            return {"divergence": -confidence, "signal": "bearish_divergence", "confidence": confidence}
 
-        # Bearish divergence: delta falling but price stable/rising
-        if delta_change < -100 and recent_delta < 0:
-            return {"divergence": -0.5, "signal": "bearish_divergence"}
+        # Bullish divergence: price falling but CVD rising
+        if price_change < -0.001 and delta_change > 0 and recent_delta > 0:
+            confidence = min(1.0, abs(delta_change) / 500)
+            return {"divergence": confidence, "signal": "bullish_divergence", "confidence": confidence}
 
-        # Bullish divergence: delta rising but price stable/falling
-        if delta_change > 100 and recent_delta > 0:
-            return {"divergence": 0.5, "signal": "bullish_divergence"}
+        return {"divergence": 0, "signal": "neutral", "confidence": 0}
 
-        return {"divergence": 0, "signal": "neutral"}
+    def get_cvd_divergence_v2(self, symbol: str) -> dict:
+        """
+        Enhanced CVD divergence: compare actual price movement vs CVD over two 5min windows.
+        Returns signal + confidence (0-1).
+        """
+        trades = self._trades.get(symbol, deque())
+        if len(trades) < 30:
+            return {"divergence": 0, "signal": "neutral", "confidence": 0}
+
+        now = datetime.utcnow().timestamp()
+        w1_start, w1_end = now - 600, now - 300
+        w2_start, w2_end = now - 300, now
+
+        w1_delta, w2_delta = 0, 0
+        w1_prices, w2_prices = [], []
+
+        for ts, vol, is_buy, price in trades:
+            if w1_start <= ts < w1_end:
+                w1_delta += vol if is_buy else -vol
+                w1_prices.append(price)
+            elif w2_start <= ts <= w2_end:
+                w2_delta += vol if is_buy else -vol
+                w2_prices.append(price)
+
+        if not w1_prices or not w2_prices:
+            return {"divergence": 0, "signal": "neutral", "confidence": 0}
+
+        # Price direction
+        price_w1_avg = sum(w1_prices) / len(w1_prices)
+        price_w2_avg = sum(w2_prices) / len(w2_prices)
+        price_pct = (price_w2_avg - price_w1_avg) / max(price_w1_avg, 1e-8)
+
+        # CVD direction
+        cvd_change = w2_delta - w1_delta
+
+        # Bearish divergence: price up but CVD declining
+        if price_pct > 0.0005 and cvd_change < 0:
+            confidence = min(1.0, abs(cvd_change) / 300)
+            return {"divergence": -confidence, "signal": "bearish_divergence", "confidence": confidence}
+
+        # Bullish divergence: price down but CVD rising
+        if price_pct < -0.0005 and cvd_change > 0:
+            confidence = min(1.0, abs(cvd_change) / 300)
+            return {"divergence": confidence, "signal": "bullish_divergence", "confidence": confidence}
+
+        # CVD confirming price direction
+        if price_pct > 0.0005 and cvd_change > 0:
+            confidence = min(1.0, abs(cvd_change) / 300)
+            return {"divergence": 0, "signal": "bullish_confirmation", "confidence": confidence}
+        if price_pct < -0.0005 and cvd_change < 0:
+            confidence = min(1.0, abs(cvd_change) / 300)
+            return {"divergence": 0, "signal": "bearish_confirmation", "confidence": confidence}
+
+        return {"divergence": 0, "signal": "neutral", "confidence": 0}
+
+    def get_whale_activity(self, symbol: str, window: int = 300, multiplier: float = 3.0) -> dict:
+        """
+        Detect whale trades: trades > multiplier x median volume.
+        Returns whale_pressure (-1 to +1), whale_count, whale_volume.
+        """
+        now = datetime.utcnow().timestamp()
+        cutoff = now - window
+        trades = self._trades.get(symbol, deque())
+
+        recent = [(ts, vol, is_buy, price) for ts, vol, is_buy, price in trades if ts >= cutoff]
+        if len(recent) < 10:
+            return {"whale_pressure": 0, "whale_count": 0, "whale_buy_vol": 0, "whale_sell_vol": 0, "threshold": 0}
+
+        volumes = [vol for _, vol, _, _ in recent]
+        median_vol = statistics.median(volumes)
+        threshold = median_vol * multiplier
+
+        whale_buy_vol = 0
+        whale_sell_vol = 0
+        whale_count = 0
+
+        for ts, vol, is_buy, price in recent:
+            if vol >= threshold:
+                whale_count += 1
+                if is_buy:
+                    whale_buy_vol += vol
+                else:
+                    whale_sell_vol += vol
+
+        total_whale = whale_buy_vol + whale_sell_vol
+        if total_whale == 0:
+            pressure = 0
+        else:
+            pressure = (whale_buy_vol - whale_sell_vol) / total_whale
+
+        return {
+            "whale_pressure": round(pressure, 3),
+            "whale_count": whale_count,
+            "whale_buy_vol": round(whale_buy_vol, 2),
+            "whale_sell_vol": round(whale_sell_vol, 2),
+            "threshold": round(threshold, 4),
+        }
+
+    def get_aggressive_ratio(self, symbol: str, window: int = 60) -> dict:
+        """
+        Ratio taker buy / taker sell over window.
+        >1 = buyers aggressive, <1 = sellers aggressive.
+        """
+        now = datetime.utcnow().timestamp()
+        cutoff = now - window
+        trades = self._trades.get(symbol, deque())
+
+        buy_count = 0
+        sell_count = 0
+        buy_vol = 0
+        sell_vol = 0
+
+        for ts, vol, is_buy, _price in trades:
+            if ts >= cutoff:
+                if is_buy:
+                    buy_count += 1
+                    buy_vol += vol
+                else:
+                    sell_count += 1
+                    sell_vol += vol
+
+        total_count = buy_count + sell_count
+        total_vol = buy_vol + sell_vol
+
+        return {
+            "ratio": round(buy_vol / max(sell_vol, 1e-8), 3),
+            "buy_count": buy_count,
+            "sell_count": sell_count,
+            "buy_vol": round(buy_vol, 2),
+            "sell_vol": round(sell_vol, 2),
+            "total_trades": total_count,
+            "total_vol": round(total_vol, 2),
+        }
+
+    def get_last_trade_ts(self, symbol: str) -> float:
+        """Return timestamp of last trade, 0 if none."""
+        trades = self._trades.get(symbol, deque())
+        if not trades:
+            return 0
+        return trades[-1][0]
 
     def get_flow_score(self, symbol: str) -> tuple[float, str]:
         """

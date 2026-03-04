@@ -82,11 +82,21 @@ class Scanner:
             except Exception as e:
                 logger.error(f"[{self.name}] Erreur analyse {symbol} {mode}: {e}", exc_info=True)
 
+        # V4: Inject flow intelligence + session edge into data dict
+        flow_intel = getattr(self, '_flow_intelligence_ref', None)
+        session_edge = getattr(self, '_session_edge_ref', None)
+
         tasks = []
         for symbol in pairs:
             data = all_data.get(symbol)
             if not data:
                 continue
+            if flow_intel:
+                fi = flow_intel.get_intelligence(symbol)
+                # Inject session edge into flow_intelligence dict
+                if session_edge:
+                    fi["session_edge"] = session_edge.get_edge(symbol)
+                data["flow_intelligence"] = fi
             for mode in modes:
                 tasks.append(_analyze_one(symbol, mode, data))
 
@@ -188,6 +198,10 @@ class Scanner:
     def set_position_monitor(self, pm):
         """Associe un position_monitor a ce scanner."""
         self._position_monitor_ref = pm
+
+    def set_flow_intelligence(self, fi):
+        """Associe un FlowIntelligence a ce scanner (V4 only)."""
+        self._flow_intelligence_ref = fi
 
     def _has_recent_signal(self, symbol: str) -> bool:
         last = self._signal_timestamps.get(symbol)

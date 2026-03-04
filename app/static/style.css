@@ -1045,6 +1045,74 @@ body {
 .ctx-detail-row span:first-child { color: var(--text-secondary); }
 .ctx-detail-row span:last-child { font-family: monospace; font-weight: 600; }
 
+/* ===== Flow Intelligence Tab ===== */
+.flow-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 16px; padding: 0 4px;
+}
+.flow-header h2 { font-size: 16px; margin: 0; }
+.flow-refresh-info { font-size: 11px; color: var(--text-secondary); }
+.flow-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px;
+}
+.flow-symbol-card {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px; overflow: hidden;
+}
+.flow-symbol-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+.flow-symbol-name { font-weight: 700; font-size: 14px; }
+.flow-bias-badge {
+    padding: 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+}
+.flow-bias-bullish { background: rgba(63,185,80,0.15); color: var(--green); }
+.flow-bias-bearish { background: rgba(248,81,73,0.15); color: var(--red); }
+.flow-bias-neutral { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+.flow-score-bar {
+    height: 6px; border-radius: 3px; background: var(--border);
+    margin-bottom: 10px; overflow: hidden;
+}
+.flow-score-fill {
+    height: 100%; border-radius: 3px; transition: width 0.3s;
+}
+.flow-section { margin-bottom: 8px; }
+.flow-section-title {
+    font-size: 10px; text-transform: uppercase; color: var(--text-secondary);
+    letter-spacing: 0.5px; margin-bottom: 4px;
+}
+.flow-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; padding: 2px 0;
+}
+.flow-row .label { color: var(--text-secondary); }
+.flow-row .value { font-family: monospace; font-weight: 600; }
+.flow-delta-bar {
+    display: flex; height: 8px; border-radius: 4px; overflow: hidden;
+    background: var(--border); margin: 4px 0;
+}
+.flow-delta-buy { background: var(--green); }
+.flow-delta-sell { background: var(--red); }
+.flow-signals-list { margin-top: 6px; }
+.flow-signal-item {
+    font-size: 11px; padding: 3px 6px; margin: 2px 0;
+    background: rgba(255,255,255,0.03); border-radius: 4px;
+    border-left: 2px solid var(--blue);
+}
+.flow-liq-feed { max-height: 100px; overflow-y: auto; }
+.flow-liq-item {
+    font-size: 10px; padding: 2px 4px; margin: 1px 0;
+    display: flex; justify-content: space-between;
+}
+.flow-liq-long { color: var(--green); }
+.flow-liq-short { color: var(--red); }
+.flow-stale-badge {
+    font-size: 10px; color: var(--orange); font-style: italic;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .brain-dimensions-grid { grid-template-columns: 1fr; }
@@ -1054,4 +1122,5 @@ body {
         grid-template-columns: 75px 60px 45px 65px 35px 55px 40px 55px 70px 45px;
         font-size: 10px;
     }
+    .flow-grid { grid-template-columns: 1fr; }
 }
