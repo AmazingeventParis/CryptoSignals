@@ -103,7 +103,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
     if not indicators_filter:
         return _no_trade(symbol, mode, "Indicateurs TF filtre insuffisants")
 
-    direction = evaluate_direction(indicators_filter)
+    direction = evaluate_direction(indicators_filter, config=s.get("direction"))
     direction_bias = direction["bias"]
 
     # Gestion direction neutre en swing
@@ -118,9 +118,72 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
             )
 
     # =========================================
-    # V4 ONLY: REGIME DE MARCHE + MTF CONFLUENCE
+    # V4 ONLY: SNIPER GATES
     # =========================================
     is_v4 = s.get("_bot_version") == "V4"
+
+    if is_v4:
+        sniper_cfg = s.get("sniper", {})
+
+        # Gate 1: Direction Hard Gate — block neutral and weak direction
+        if sniper_cfg.get("direction_gate", False):
+            min_dir_score = sniper_cfg.get("direction_min_score", 65)
+            if direction_bias == "neutral":
+                return _no_trade(
+                    symbol, mode, "Sniper: direction neutre bloquee",
+                    direction["signals"], tradeability["score"]
+                )
+            if direction["score"] < min_dir_score:
+                return _no_trade(
+                    symbol, mode,
+                    f"Sniper: direction score {direction['score']} < {min_dir_score}",
+                    direction["signals"], tradeability["score"]
+                )
+
+        # Gate 2: OBI (Order Book Imbalance)
+        if sniper_cfg.get("obi_gate", False):
+            bid_d = orderbook.get("bid_depth", 0)
+            ask_d = orderbook.get("ask_depth", 0)
+            total = bid_d + ask_d
+            if total > 0:
+                obi = (bid_d - ask_d) / total
+                obi_thresh = sniper_cfg.get("obi_min_threshold", 0.15)
+                if direction_bias == "long" and obi < obi_thresh:
+                    return _no_trade(
+                        symbol, mode,
+                        f"Sniper: OBI {obi:.2f} < {obi_thresh} pour long",
+                        direction["signals"], tradeability["score"]
+                    )
+                elif direction_bias == "short" and obi > -obi_thresh:
+                    return _no_trade(
+                        symbol, mode,
+                        f"Sniper: OBI {obi:.2f} > {-obi_thresh} pour short",
+                        direction["signals"], tradeability["score"]
+                    )
+
+        # Gate 3: Momentum (last 4 candles)
+        if sniper_cfg.get("momentum_gate", False):
+            min_candles = sniper_cfg.get("momentum_min_candles", 3)
+            last_4 = df_analysis.tail(4)
+            if len(last_4) >= 4:
+                green = sum(1 for _, c in last_4.iterrows() if c["close"] > c["open"])
+                red = 4 - green
+                if direction_bias == "long" and green < min_candles:
+                    return _no_trade(
+                        symbol, mode,
+                        f"Sniper: momentum {green}/4 green < {min_candles}",
+                        direction["signals"], tradeability["score"]
+                    )
+                elif direction_bias == "short" and red < min_candles:
+                    return _no_trade(
+                        symbol, mode,
+                        f"Sniper: momentum {red}/4 red < {min_candles}",
+                        direction["signals"], tradeability["score"]
+                    )
+
+    # =========================================
+    # V4 ONLY: REGIME DE MARCHE + MTF CONFLUENCE
+    # =========================================
     v4f = s.get("v4_features", {})
     regime_info = {}
     market_regime = ""

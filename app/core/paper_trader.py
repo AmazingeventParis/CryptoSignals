@@ -58,9 +58,9 @@ class PaperTrader:
                 logger.info(f"[{self.bot_version}] Circuit breaker: {breaker_reason}, skip {signal['symbol']}")
                 return False
 
-        # V4: Fixed max 8 positions
+        # V4 Sniper: max 2 positions (focus)
         if self.bot_version == "V4":
-            max_pos = 8
+            max_pos = 2
         else:
             max_pos = MAX_OPEN
 
@@ -103,11 +103,11 @@ class PaperTrader:
         portfolio = await get_paper_portfolio(self.bot_version)
         available = portfolio["current_balance"] - portfolio["reserved_margin"]
 
-        # V4: Fixed sizing from config (no score_mult variation)
+        # V4 Sniper: $18 margin x 20x leverage
         if self.bot_version == "V4":
             sizing_cfg = self.settings.get("sizing", {})
-            margin = 10.0  # fixed $10
-            margin = max(sizing_cfg.get("min_margin", 8), min(sizing_cfg.get("max_margin", 12), margin))
+            margin = sizing_cfg.get("base_margin", 18.0)
+            margin = max(sizing_cfg.get("min_margin", 15), min(sizing_cfg.get("max_margin", 20), margin))
         else:
             margin = FIXED_MARGIN
 

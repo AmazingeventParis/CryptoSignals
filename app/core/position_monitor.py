@@ -234,6 +234,31 @@ class PositionMonitor:
                         self._processing.discard(pos_id)
                     continue
 
+            # --- V4 Sniper: Time stop / scratch exit — PRIORITY 3 ---
+            if self.bot_version == "V4" and self.settings:
+                sniper_cfg = self.settings.get("sniper", {})
+                ts_cfg = sniper_cfg.get("time_stop", {})
+                scratch_seconds = ts_cfg.get("scratch_seconds", 0)
+                if scratch_seconds > 0:
+                    entry_time = pos.get("entry_time") or pos.get("created_at")
+                    if entry_time:
+                        try:
+                            if isinstance(entry_time, str):
+                                et = datetime.fromisoformat(entry_time)
+                            else:
+                                et = entry_time
+                            elapsed = (datetime.utcnow() - et).total_seconds()
+                        except Exception:
+                            elapsed = 0
+                        scratch_thresh = ts_cfg.get("scratch_threshold_usd", 0.30)
+                        if elapsed >= scratch_seconds and abs(current_pnl) < scratch_thresh:
+                            self._processing.add(pos_id)
+                            try:
+                                await self._handle_scratch_close(pos, price, current_pnl)
+                            finally:
+                                self._processing.discard(pos_id)
+                            continue
+
             # --- V4 only: Stale timeout + profit giveback (after min_profit/max_loss) ---
             if self.bot_version == "V4":
                 v4f = self.settings.get("v4_features", {}) if self.settings else {}
@@ -737,6 +762,20 @@ class PositionMonitor:
         await send_trade_update(
             symbol, "stale_timeout",
             f"Position stagnante fermee\nPnL: {pnl_usd:+.2f}$"
+        )
+
+    async def _handle_scratch_close(self, pos: dict, price: float, pnl_usd: float):
+        symbol = pos["symbol"]
+        logger.info(f"[{self.bot_version}] SCRATCH EXIT {symbol} PnL={pnl_usd:.4f}$ (time stop)")
+
+        await self._cancel_remaining_tp_orders(pos)
+        await self._cancel_order_safe(pos.get("sl_order_id"), symbol)
+        await self._close_and_journal(pos, "scratch_exit", price, pnl_usd)
+        pos["state"] = "closed"
+
+        await send_trade_update(
+            symbol, "scratch_exit",
+            f"Scratch exit (time stop)\nPnL: {pnl_usd:+.2f}$"
         )
 
     # --- V4: Profit Giveback Protection ---

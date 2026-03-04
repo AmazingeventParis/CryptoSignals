@@ -10,10 +10,11 @@ from app.config import SETTINGS
 
 logger = logging.getLogger(__name__)
 
-DIR_CFG = SETTINGS["direction"]
+_DEFAULT_DIR_CFG = SETTINGS["direction"]
 
 
-def evaluate_direction(indicators: dict) -> dict:
+def evaluate_direction(indicators: dict, config: dict = None) -> dict:
+    dir_cfg = config or _DEFAULT_DIR_CFG
     if not indicators:
         return {"bias": "neutral", "score": 0, "signals": []}
 
@@ -29,7 +30,7 @@ def evaluate_direction(indicators: dict) -> dict:
 
     if ema_slow > 0:
         ema_spread = ((ema_fast - ema_slow) / ema_slow) * 100
-        threshold = DIR_CFG["ema_neutral_threshold"]
+        threshold = dir_cfg["ema_neutral_threshold"]
 
         if ema_spread > threshold and price > ema_fast:
             long_votes += 1
@@ -56,8 +57,8 @@ def evaluate_direction(indicators: dict) -> dict:
 
     # --- Vote 3: RSI ---
     rsi_val = indicators.get("last_rsi", 50)
-    long_thresh = DIR_CFG["rsi_long_threshold"]
-    short_thresh = DIR_CFG["rsi_short_threshold"]
+    long_thresh = dir_cfg["rsi_long_threshold"]
+    short_thresh = dir_cfg["rsi_short_threshold"]
 
     if rsi_val > long_thresh:
         long_votes += 1
