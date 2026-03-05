@@ -42,17 +42,19 @@ git add <fichiers> && git commit -m "message" && git push origin master
 ## Architecture Triple Bot (v3.0)
 
 ### Principe
-Trois bots tournent en parallele pour comparer les performances :
+Quatre bots tournent en parallele pour comparer les performances :
 - **V1 (strict)** : min_score scalp=65/swing=70, tradeability min 0.60, spread kill 0.15%
 - **V2 (assoupli)** : min_score scalp=45/swing=50, tradeability min 0.35, spread kill 0.30%
 - **V3 (quick profit)** : memes entrees que V2, ferme 100% de la position des $0.10 de gain (`min_profit_usd: 0.10`)
+- **V4 (Sniper + Flow Intelligence)** : trades haute qualite, 3 sniper gates + flow intelligence v2 (microstructure, Binance data, 6 hard gates, 11 modifiers)
 - **Freqtrade** : bot externe (CombinedStrategy EMA9/21 + RSI + BB + ADX)
 
 ### Configs
 - `config/settings_V1.yaml` — Config stricte
 - `config/settings_V2.yaml` — Config assouplie
 - `config/settings_V3.yaml` — Config quick profit (comme V2 + `min_profit_usd`)
-- `app/config.py` — Charge les trois : `SETTINGS_V1`, `SETTINGS_V2`, `SETTINGS_V3`, `SETTINGS = SETTINGS_V2`
+- `config/settings_V4.yaml` — Config V4 Sniper + Flow Intelligence
+- `app/config.py` — Charge les quatre : `SETTINGS_V1`, `SETTINGS_V2`, `SETTINGS_V3`, `SETTINGS_V4`, `SETTINGS = SETTINGS_V2`
 
 ### Instances
 Plus de singletons. Tout est instancie dans `main.py` :
@@ -61,6 +63,7 @@ bot_instances = {
     "V1": { scanner, paper_trader, position_monitor },
     "V2": { scanner, paper_trader, position_monitor },
     "V3": { scanner, paper_trader, position_monitor },
+    "V4": { scanner, paper_trader, position_monitor, flow_intelligence, microstructure, session_edge },
 }
 ```
 - `routes.py` accede aux instances via `_get_bot_instances()`
@@ -73,8 +76,84 @@ bot_instances = {
 - Close reason : `min_profit`, journalise comme un win
 
 ### Ressources partagees
-- `market_data` (MEXC) = une seule connexion, les 3 bots lisent les memes prix
+- `market_data` (MEXC) = une seule connexion, les 4 bots lisent les memes prix
 - `sentiment_analyzer` = partage
+- `order_flow_tracker` (V4) = partage tick data MEXC pour microstructure + flow intelligence
+
+---
+
+## V4 Sniper + Flow Intelligence (v2)
+
+### Architecture Pipeline V4
+```
+MEXC push.deal WS ─> OrderFlowTracker._trades[symbol]
+                            │
+                            ├─> MicrostructureAnalyzer (VPIN, sweep, tape speed, imbalance)
+                            │
+                            ▼
+                     FlowIntelligence.get_intelligence(symbol)
+                            │
+Binance REST (5min) ───────>│  (L/S global, top traders L/S, taker volume, OI, basis)
+Binance Liquidation WS ────>│  (liquidations temps reel)
+Funding momentum ──────────>│
+SessionEdge (DB trades) ───>│
+                            │
+                            ▼
+                     Scanner._scan_cycle_parallel() → data["flow_intelligence"]
+                            │
+                            ▼
+                     signal_engine.analyze_pair()
+                         ├─ Sniper Gate 1: Direction (neutre bloquee, score min 65)
+                         ├─ Sniper Gate 2: Flow Gates (CVD, whale, sweep, OI div, smart money, session)
+                         ├─ Sniper Gate 3: Momentum (3/4 candles)
+                         ├─ Layer C: Entry trigger
+                         └─ Flow Modifiers: 11 bonus/malus (VPIN, sweep, CVD, OI, taker, tape, funding, L/S, session, basis, liq)
+```
+
+### Fichiers V4 specifiques
+| Fichier | Role |
+|---------|------|
+| `app/core/order_flow.py` | Tick data MEXC: CVD v2, whale detection, aggressive ratio, multi-delta |
+| `app/core/microstructure.py` | VPIN (volume-sync informed trading), sweep detection, tape speed, trade imbalance |
+| `app/core/flow_intelligence.py` | Aggregateur central: Binance REST/WS + microstructure + liquidation levels + scores |
+| `app/core/session_edge.py` | Win rate par (symbol, session) depuis l'historique trades |
+| `config/settings_V4.yaml` | Config sniper gates + flow_intelligence gates + modifiers |
+
+### Binance Data (gratuit, sans cle API)
+- **REST** (toutes les 5min) : globalLongShortAccountRatio, topLongShortAccountRatio, topLongShortPositionRatio, takerlongshortRatio, openInterestHist, ticker/price (spot+futures pour basis)
+- **WS** : `wss://fstream.binance.com/ws/!forceOrder@arr` (liquidations temps reel)
+- **Symbol mapping** : `BTC/USDT:USDT` → `BTCUSDT` (strip `:USDT`, remove `/`)
+- **Rate limit** : ~40 req/5min << 1200/min (safe)
+
+### Flow Intelligence Gates (hard blocks)
+1. **CVD Gate** : bloque si CVD diverge contre direction (confidence >= 0.3)
+2. **Whale Gate** : bloque si whale_pressure oppose direction (> 0.5)
+3. **Sweep Gate** : bloque si sweep agressif oppose direction (intensity > 0.4)
+4. **OI Divergence Gate** : bloque longs sur "fake_pump"
+5. **Smart Money Gate** : bloque si top traders opposent direction
+6. **Session Edge Gate** : bloque si WR < 30% pour ce symbol/session
+
+### Flow Modifiers (bonus/malus points)
+| Source | Points | Condition |
+|--------|--------|-----------|
+| CVD confirme | +5 | CVD aligne avec direction |
+| VPIN confirme | +5 | VPIN > 0.6 + biais aligne |
+| Sweep aligne | +5 | Sweep meme direction |
+| OI continuation | +4 | OI confirme tendance |
+| Taker confirme | +3 | Ratio > 1.15 ou < 0.85 |
+| L/S contrarian | +3 | Ratio > 2.5 contrarian |
+| Tape acceleration | +3 | TPS > 3x + flow aligne |
+| Funding contrarian | +3 | Extreme + contrarian |
+| Session edge | ±3 | WR > 65% / WR < 40% |
+| Basis confirme | +2 | Contango/backwardation aligne |
+| Liq cluster | +2 | Prix proche cluster liquidation |
+
+### V4 Paires (8 les plus liquides)
+BTC, SOL, XRP, DOGE, PEPE, SUI, LINK, AVAX (toutes /USDT:USDT sur MEXC Futures)
+
+### IMPORTANT: Variable `v4f`
+- `v4f = s.get("v4_features", {})` DOIT etre defini AVANT les flow gates dans `signal_engine.py`
+- Bug historique : v4f defini apres utilisation → NameError silencieux → zero signal V4
 
 ---
 
@@ -100,12 +179,16 @@ Cypto/
     │   ├── tradeability.py       # Layer A: 6 checks + kill switches
     │   ├── direction.py          # Layer B: EMA cross + structure + RSI
     │   ├── entry.py              # Layer C: breakout, retest, divergence, ema_bounce
-    │   ├── signal_engine.py      # Combine A+B+C -> signal (accepte settings en param)
+    │   ├── signal_engine.py      # Combine A+B+C -> signal + V4 flow gates/modifiers
     │   ├── risk_manager.py       # SL, TP1/2/3, leverage, sizing
     │   ├── scanner.py            # Boucle 30s, accepte name+settings (plus de singleton)
     │   ├── paper_trader.py       # Paper trading auto (accepte bot_version)
     │   ├── position_monitor.py   # Suivi positions + trailing stop (accepte bot_version)
     │   ├── order_executor.py     # Ordres MEXC Futures (position_monitor en param)
+    │   ├── order_flow.py         # V4: tick data MEXC, CVD, whales, deltas
+    │   ├── flow_intelligence.py  # V4: aggregateur flow (Binance + microstructure + liq)
+    │   ├── microstructure.py     # V4: VPIN, sweep detection, tape speed
+    │   ├── session_edge.py       # V4: WR par symbol/session
     │   └── trade_learner.py      # Apprentissage: desactive combos perdants
     ├── services/
     │   ├── telegram_bot.py       # Notifications Telegram
@@ -113,9 +196,9 @@ Cypto/
     ├── api/
     │   └── routes.py             # REST endpoints + Freqtrade proxy
     └── static/
-        ├── index.html            # Dashboard (v=70)
-        ├── style.css             # Theme sombre (v=70)
-        ├── app.js                # Frontend JS (v=70)
+        ├── index.html            # Dashboard (v=76)
+        ├── style.css             # Theme sombre (v=76)
+        ├── app.js                # Frontend JS (v=76)
         └── login.html            # Page connexion
 ```
 
@@ -163,11 +246,13 @@ Cypto/
 1. **Bot V1** : Positions live V1 + signaux V1
 2. **Bot V2** : Positions live V2 + signaux V2
 3. **Bot V3** : Positions live V3 + signaux V3
-4. **FT Freqtrade** : Positions ouvertes + historique FT
-5. **Charts** : Candlestick temps reel + FVG + volume
-6. **Journal** : Trades des 4 bots avec badges V1/V2/V3/FT
-7. **VS Comparaison** : 4 courbes P&L superposees (V1 bleu, V2 violet, V3 vert, FT orange) + stats
-8. **Paires** : Paires surveillees
+4. **Bot V4** : Positions live V4 + signaux V4
+5. **FT Freqtrade** : Positions ouvertes + historique FT
+6. **Charts** : Candlestick temps reel + FVG + volume
+7. **Journal** : Trades des 5 bots avec badges V1/V2/V3/V4/FT
+8. **VS Comparaison** : 5 courbes P&L superposees + stats
+9. **Paires** : Paires surveillees
+10. **Flow** : Flow Intelligence temps reel (CVD, VPIN, sweeps, whales, smart money, OI, taker, basis, funding, liq levels, session edge)
 
 ### Sidebar
 4 sections : Bot V1 (bleu), Bot V2 (violet), Bot V3 (vert), Freqtrade (orange)
@@ -206,9 +291,14 @@ Chacune avec : status, balance, P&L, Win Rate, Gagnes, Perdus, Signaux, Trades
 - `GET /api/freqtrade/trades?limit=50` — Trades FT fermes
 - `GET /api/freqtrade/stats` — Stats FT (balance, PnL, win rate)
 
+### Flow Intelligence (V4)
+- `GET /api/flow` — Flow intelligence tous les symbols V4
+- `GET /api/flow/{symbol}` — Flow intelligence un symbol (utiliser `-` au lieu de `/`)
+- `GET /api/session-edge` — Session edge stats tous symbols V4
+
 ### Autres
-- `GET /api/status` — Etat des 2 scanners V1+V2
-- `GET /api/debug/{symbol}?mode=scalping&bot_version=V2` — Debug analyse
+- `GET /api/status` — Etat des 4 scanners V1+V2+V3+V4
+- `GET /api/debug/{symbol}?mode=scalping&bot_version=V4` — Debug analyse (injecte flow data pour V4)
 - `POST /api/execute/{signal_id}` — Executer signal manuellement
 - `GET /api/learning` — Stats apprentissage
 - `GET /api/sentiment` — Sentiment marche
@@ -234,14 +324,15 @@ Chacune avec : status, balance, P&L, Win Rate, Gagnes, Perdus, Signaux, Trades
 ---
 
 ## Paires Tradees
-XRP, DOGE, PEPE, RUNE, SOL, KAITO, BTC, VIRTUAL, TRUMP
+- **V1/V2/V3** : XRP, DOGE, PEPE, RUNE, SOL, KAITO, BTC, VIRTUAL, TRUMP
+- **V4** : BTC, SOL, XRP, DOGE, PEPE, SUI, LINK, AVAX (8 les plus liquides)
 (toutes en /USDT:USDT sur MEXC Futures)
 
 ---
 
 ## Points Critiques
 - `order_executor.py` : `position_monitor` passe en parametre (pas d'import singleton)
-- Cache version CSS/JS : incrementer a chaque modif frontend (actuellement **v=70**)
+- Cache version CSS/JS : incrementer a chaque modif frontend (actuellement **v=76**)
 - MEXC API : exchange public (sans cle) pour data, cle API uniquement pour balance
 - WebSocket : relay serveur obligatoire (navigateur bloque connexion directe MEXC)
 - MEXC WS kline fields : `o/h/l/c` = prix, `q`/`a` = volume (PAS `v`)
@@ -261,6 +352,8 @@ XRP, DOGE, PEPE, RUNE, SOL, KAITO, BTC, VIRTUAL, TRUMP
 | Service Worker cache obsolete | Desactive, headers no-cache, cache-busting ?v=N |
 | WebSocket navigateur bloque | Relay via serveur FastAPI |
 | Chart zoom reset au refresh | `fitContent()` uniquement au 1er chargement |
+| V4 zero signals (historique) | `v4f` defini apres utilisation → NameError silencieux. Toujours definir `v4f` AVANT les flow gates |
+| V4 Binance cold start | CVD, OI divergence, funding momentum neutres les 15-30 premieres minutes (normal) |
 
 ---
 
