@@ -121,6 +121,7 @@ async def analyze_pair(symbol: str, market_data_dict: dict, mode: str, settings=
     # V4 ONLY: SNIPER GATES
     # =========================================
     is_v4 = s.get("_bot_version") == "V4"
+    v4f = s.get("v4_features", {})
 
     if is_v4:
         sniper_cfg = s.get("sniper", {})

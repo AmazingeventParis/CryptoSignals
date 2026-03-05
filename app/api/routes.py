@@ -180,6 +180,18 @@ async def debug_pair(symbol: str, mode: str = Query("scalping"), bot_version: st
 
     tfs = mode_cfg["timeframes"]["analysis"] + [mode_cfg["timeframes"]["filter"]]
     data = await market_data.fetch_all_data(symbol_fmt, tfs)
+
+    # V4: inject flow intelligence + session edge into data
+    if bot_version == "V4":
+        bots = _get_bot_instances()
+        fi = bots.get("V4", {}).get("flow_intelligence")
+        se = bots.get("V4", {}).get("session_edge")
+        if fi:
+            fi_data = fi.get_intelligence(symbol_fmt)
+            if se:
+                fi_data["session_edge"] = se.get_edge(symbol_fmt)
+            data["flow_intelligence"] = fi_data
+
     result = await analyze_pair(symbol_fmt, data, mode, settings=s)
     return result
 
